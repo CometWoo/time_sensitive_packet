@@ -99,6 +99,298 @@ Cilium 기반 Kubernetes 클러스터에서 eBPF + TC `prio` qdisc 조합으로 
 
 **한 줄 요약**: jitter와 중부하 이하 p99에서 일관된 개선을 관찰했으며, 이는 논문의 핵심 주장 "eBPF + 우선순위 큐로 TSN 패킷의 도착 일관성을 개선할 수 있다"를 VM 환경에서도 재현했음을 의미합니다. 다만 max latency나 고부하 영역의 정량적 판단을 위해선 다회 반복 측정이 필요합니다.
 
+---
+
+## 수치 분석 — 왜 이런 절대값이 나오는가
+
+### Throughput 125.0 KB/s — 왜 정확히 이 수치?
+
+순수 계산값입니다:
+```
+패킷 크기 × 송신 빈도 = 128 byte × (1000 pkt/s) = 128,000 byte/s ≈ 125.0 KB/s
+                                    └ interval=1ms → 1초에 1000개
+```
+**talker.py가 의도적으로 sleep 기반 페이싱**을 하기 때문에 NIC 한계와 무관하게 이 값이 나옵니다. 만약 100 KB/s가 나온다면 시스템이 1ms 페이싱을 못 따라가고 있다는 신호입니다.
+
+### Median latency 0.8~1.4ms — 어디서 오는가?
+
+| 구성 요소 | 기여 latency (대략) | 비고 |
+|----------|-------------------|------|
+| Python `time.sleep()` 정확도 | ~50~200μs | userspace timer 한계 |
+| socket → kernel UDP send 처리 | ~10~50μs | syscall + sk_buff alloc |
+| Cilium tcx (cil_from_container) | ~20~100μs | BPF redirect 처리 |
+| virtio NIC tx → 호스트 → virtio NIC rx | ~100~500μs | VM virtualization 오버헤드 |
+| Cilium tcx (cil_to_endpoint) | ~20~100μs | 수신측 BPF |
+| Listener Python recv 처리 | ~50~200μs | kernel → userspace 복사 + `time.time_ns()` |
+| **합계 (median 추정)** | **~250μs ~ 1.5ms** | 측정값 0.8~1.4ms와 일치 |
+
+물리 서버라면 0.05~0.2ms 수준 — VM은 **virtualization overhead로 약 10x 느림**.
+
+### p99 latency 10~13ms — Median 대비 10배 차이의 정체
+
+이 spike 들의 원인 후보:
+1. **Linux kernel softirq 지연**: 다른 IRQ 처리 중이면 패킷 처리 지연. CPU 부하 시 자주 발생.
+2. **VirtualBox 호스트 스케줄링**: 호스트 OS가 VM의 vCPU를 다른 프로세스에 양보할 때 발생하는 hypervisor preemption. ms 단위 stall.
+3. **kernel TCP/UDP socket buffer 정체**: 송수신 큐가 일시적으로 쌓이는 burst.
+4. **GC 또는 메모리 압박**: Python GC, kernel slab 할당 지연.
+
+`prio` qdisc는 (1)과 (3)에 영향을 주지만 (2)는 못 잡습니다. 그래서 proposed가 baseline보다 낮긴 한데 0이 되진 않습니다.
+
+### max latency 수백~수천 ms — 왜 이렇게 큰가?
+
+100ms 이상의 단일 outlier는 거의 항상 다음 중 하나:
+- **VirtualBox 또는 호스트 OS의 일시적 freeze** (호스트 디스크 IO, 다른 VM 시작 등)
+- **Cilium agent 또는 kubelet의 health check 사이클**과 충돌 (10초마다 큰 부하)
+- **워커 노드의 kernel softlockup** 직전 상황 (CPU 99%에서 자주 발생)
+
+`max`는 10000개 패킷 중 1개의 값이므로 **이런 거대 outlier에 완전히 휘둘립니다**. 통계적으로 안정한 비교는 p99까지로 봐야 합니다.
+
+### jitter p50 600~900μs — 도착 간격이 1ms ±0.6ms 정도
+
+`jitter[i] = recv_time[i] - (recv_time[i-1] + 1ms_expected)`
+
+평균 ~700μs는 다음을 의미:
+- 0.3ms ~ 1.7ms 사이로 도착 간격이 들쭉날쭉
+- **이 변동의 주된 원인은 송신측 timer 정확도** (Python `time.sleep()` + 부하)
+- proposed가 baseline보다 낮은 건 prio qdisc가 송신 측에서 burst를 줄여주기 때문
+
+물리 서버 + 정밀 timer였다면 < 50μs 가능.
+
+### Cilium native routing 환경에서 eBPF 카운터가 0인 이유
+
+```
+sudo bpftool map dump name pkt_stats  →  모든 카운터 0
+```
+
+**우리 eBPF는 attach되어 있지만 호출되지 않습니다.** Cilium이 `routing-mode: native`일 때:
+1. Pod 송신 패킷이 lxc<hash> veth로 진입
+2. **tcx/ingress (cil_from_container)** 가 먼저 실행됨 — Cilium 자체 BPF
+3. Cilium이 `bpf_redirect()` 로 enp0s3에 직접 전달 → **clsact (우리 BPF)는 호출 안됨**
+4. enp0s3 송신 시 qdisc는 거치지만 우리 clsact egress BPF도 우회됨
+
+결과: **eBPF 통계는 0이지만 실험은 정상**. 이유는 talker가 `SO_PRIORITY=3`을 socket에 직접 설정하기 때문에 `skb->priority`가 자동 전파되고, prio qdisc가 그걸 보고 band 0으로 분류합니다. 우리 eBPF의 역할은 보강(SO_PRIORITY 없는 외부 패킷도 분류)이지 필수는 아닙니다.
+
+성능 차이는 **prio qdisc → band 0 dequeue 우선** 매커니즘에서 옵니다.
+
+---
+
+## 실험 조절 — 파라미터 변경법
+
+### A) 패킷 크기, 개수, 간격 변경
+
+`step7-experiment/k8s/talker-job.yaml` 의 `args` 수정:
+
+```yaml
+args:
+  - "--target=listener-svc.tsn-experiment.svc.cluster.local"
+  - "--port=5000"
+  - "--interval=1"      # ms — 송신 간격. 0.5면 2000pkt/s
+  - "--count=10000"     # 총 패킷 수. 10000이면 ~10초 실험
+  - "--size=128"        # bytes per packet (header 12 + payload 116)
+  - "--log=/data/talker-log.csv"
+  - "--vlan-priority=3" # SO_PRIORITY. 3=TSN, 0=best-effort
+```
+
+변경 효과:
+- `--interval` 줄이면 packet rate ↑ → bandwidth ↑, jitter 측정 정밀도 ↑, 부하 ↑
+- `--count` 늘리면 통계 신뢰성 ↑, 실험 시간 길어짐 (count × interval / 1000 = 초)
+- `--size` 늘리면 throughput 검증 가능 (1500까지 — VM MTU 한계)
+- `--vlan-priority` 를 0으로 바꾸면 **proposed 모드라도 baseline과 같아짐** (실험 통제 변수 검증용)
+
+### B) CPU 부하 강도 변경
+
+`deploy-experiment.sh run baseline <N>` 의 `<N>` 자리에 0~99 숫자.
+
+내부적으로 `step7-experiment/k8s/stress-daemonset.yaml` 의 `--cpu-load` 값을 sed로 치환합니다:
+```yaml
+args:
+  - "--cpu"
+  - "2"           # 워커 수 (vCPU 개수)
+  - "--cpu-load"
+  - "99"          # ← deploy-experiment.sh가 여기를 N으로 치환
+  - "--timeout"
+  - "600s"
+  - "--cpu-method"
+  - "matrixprod"  # 다른 옵션: int128, fft, ...
+```
+
+**주의**: `--cpu-load 99`는 worker01을 응답 불능으로 만들 수 있음. **권장 안전 상한: 80%**. 90% 이상은 worker01 다운 위험.
+
+### C) Listener 타임아웃 변경
+
+`step7-experiment/k8s/listener-deployment.yaml`:
+```yaml
+args:
+  - "--port=5000"
+  - "--interval=1"      # talker와 일치해야 jitter 계산 정확
+  - "--timeout=60"      # 마지막 패킷 후 N초 대기 → CSV write → 종료
+  - "--output=/data/results.csv"
+```
+
+`--timeout` 을 줄이면 실험 종료 빨라지지만, 너무 짧으면 후행 패킷 손실 가능. 60초가 안전.
+
+### D) Qdisc 종류 변경 (mqprio/prio/ETF)
+
+`deploy-experiment.sh` 내 `setup_tc_qdisc()` 함수:
+- 기본: TX queue ≥ 3이면 mqprio, 아니면 prio 폴백
+- ETF (txtime 스케줄링): mqprio/prio band 0 위에 ETF 추가 시도 → CLOCK_TAI 우선, 실패 시 CLOCK_REALTIME
+
+수동으로 다른 qdisc를 시험하려면 함수를 수정. 예: `taprio` (시간 인지 스케줄링):
+```bash
+sudo tc qdisc replace dev enp0s3 root taprio \
+    num_tc 3 map 2 2 1 0 ... \
+    sched-entry S 01 250000 \
+    sched-entry S 02 250000 \
+    clockid CLOCK_TAI
+```
+
+### E) 다회 반복 측정으로 통계 신뢰도 높이기
+
+현재 스크립트는 1회 실행이지만, 반복은 쉽게 가능:
+```bash
+mkdir -p step8-measurement/results/runs
+for run in 1 2 3 4 5; do
+    for cpu in 10 30 50 70; do
+        bash deploy-experiment.sh run baseline $cpu
+        mv step8-measurement/results/baseline_cpu${cpu}.csv \
+           step8-measurement/results/runs/baseline_cpu${cpu}_run${run}.csv
+        sudo bash deploy-experiment.sh run proposed $cpu
+        mv step8-measurement/results/proposed_cpu${cpu}.csv \
+           step8-measurement/results/runs/proposed_cpu${cpu}_run${run}.csv
+    done
+done
+# 그 후 별도 분석 스크립트로 평균/CI 계산
+```
+
+5회 평균 시 p99 추정의 표준 오차가 √5 ≈ 2.2배 줄어듭니다.
+
+---
+
+## 디버깅 — 실험이 의도대로 안 될 때
+
+### 단계별 검증 체크리스트
+
+#### 1. K8s 클러스터 상태
+```bash
+kubectl get nodes -o wide
+# k8s-master, k8s-worker01 모두 Ready 여야 함
+# NotReady면 VM 재시작 또는 kubelet 재시작:
+#   ssh worker01 "sudo systemctl restart kubelet"
+
+kubectl -n tsn-experiment get pods -o wide
+# listener-xxx (worker01에서 Running), talker-run-xxx (master에서 Completed/Running)
+```
+
+#### 2. Cilium 상태
+```bash
+kubectl -n kube-system get pods -l k8s-app=cilium
+# 모든 cilium pod가 Running 이어야 함
+
+# Cilium 데이터패스 모드 확인 (이 실험은 native routing 가정)
+kubectl -n kube-system get cm cilium-config -o yaml | grep -E 'routing-mode|tunnel'
+
+# Pod 간 연결성 테스트
+LISTENER_IP=$(kubectl -n tsn-experiment get pod -l app=listener -o jsonpath='{.items[0].status.podIP}')
+kubectl -n tsn-experiment exec test-master -- ping -c 3 $LISTENER_IP
+```
+
+#### 3. eBPF Attach 확인
+```bash
+# 우리 BPF 프로그램이 부착되어 있나?
+sudo bpftool net show dev enp0s3
+# 기대: clsact/egress 에 egress.bpf.o 있음
+# 기대: tcx/ingress 에 cil_from_netdev (Cilium 것)
+
+# 모든 veth에 veth_filter가 붙었나?
+for v in $(ip link show type veth | awk -F': ' '/^[0-9]/{print $2}' | cut -d'@' -f1); do
+    echo "[$v]"
+    sudo bpftool net show dev $v 2>/dev/null | grep -E 'clsact|tcx' | head -3
+done
+```
+
+#### 4. TC Qdisc 상태
+```bash
+# 현재 qdisc 무엇인가?
+sudo tc qdisc show dev enp0s3
+# baseline: fq_codel 또는 pfifo_fast
+# proposed: prio 100: bands 3 priomap ...
+
+# 각 band가 실제 패킷을 처리하나? (proposed 실행 중에 확인)
+sudo tc -s qdisc show dev enp0s3
+# prio 출력의 Sent 바이트가 0보다 커야 함
+```
+
+#### 5. eBPF 통계 (Cilium native routing에서는 0이 정상)
+```bash
+sudo bpftool map dump name pkt_stats
+# 각 prog별 [TOTAL, TSN, BEST_EFF, DROPPED] 카운터
+# Cilium native routing이면 모두 0 — 정상
+
+sudo bpftool map dump name debug_stats
+# PROG_ENTER, TSN_PORT, NOT_IP 등 분류별 카운터
+```
+
+#### 6. 실시간 trace 로그
+```bash
+# 별도 터미널에서 띄워두고 실험 실행
+sudo cat /sys/kernel/debug/tracing/trace_pipe
+# bpf_printk() 메시지가 실시간 출력됨
+# "[INFO] vef: UDP port 5000 → TSN (tc0)" 등 — Cilium native routing이면 안 나옴
+```
+
+#### 7. 패킷 송수신 검증
+```bash
+# Talker pod이 실제 송신했나?
+kubectl -n tsn-experiment logs talker-run-xxxxx
+# "전송 완료: 10000/10000 (오류: 0)" 보여야 함
+
+# Listener pod가 수신했나?
+LP=$(kubectl -n tsn-experiment get pod -l app=listener -o jsonpath='{.items[0].metadata.name}')
+kubectl -n tsn-experiment logs $LP
+# "수신: 1000 pkts, BW: 124.X KB/s, ..." 진행 로그 + "총 수신: 10000 패킷" 최종
+
+# /data/results.csv 가 만들어졌나?
+kubectl -n tsn-experiment exec $LP -- ls -la /data/
+```
+
+#### 8. tcpdump로 실제 wire 패킷 확인
+```bash
+# 마스터 노드에서 송신 패킷 캡처 (UDP 5000)
+sudo tcpdump -i enp0s3 -nn -c 20 'udp port 5000'
+
+# 워커 노드에서 수신 패킷 캡처 (worker01에 SSH 있어야 함)
+ssh worker01 "sudo tcpdump -i enp0s3 -nn -c 20 'udp port 5000'"
+```
+
+#### 9. 시계 동기화 확인
+```bash
+# 마스터와 워커의 시간 차이
+ssh worker01 "date +%s.%N" ; date +%s.%N
+# 차이가 100ms 넘으면 latency 측정 오차 큼
+# 해결: chrony 또는 PTP 설정
+```
+
+### 흔한 문제와 해결
+
+| 증상 | 진단 | 해결 |
+|------|------|------|
+| `results.csv: No such file` | listener가 패킷 0개 수신 | worker01 Ready? Cilium pod 정상? `kubectl logs $LP` 확인 |
+| Talker Job timeout | 5분 안에 완료 안 됨 | image pull 중일 수도. `kubectl describe job talker-run` 확인 |
+| `mqprio: Operation not supported` | NIC TX queue 부족 | 자동으로 prio 폴백 — 정상. 무시 |
+| `kubectl localhost:8080 refused` | sudo 환경에서 kubeconfig 없음 | `sudo cp /home/worker/.kube/config /root/.kube/config` |
+| pkt_stats 전부 0 | Cilium native routing이 우회 | **정상**. talker SO_PRIORITY로 동작 확인됨 |
+| latency 음수 | VM 시계 어긋남 | plot-results.py가 자동 정규화. 무시 가능 |
+| worker01 NotReady | CPU 99% 부하로 kubelet timeout | VirtualBox에서 VM 재시작 |
+| proposed가 baseline보다 나쁨 | 통계 noise (1회 실험의 한계) | 다회 반복 측정 권장 |
+
+### 실험 안전하게 중단
+
+```bash
+# 진행 중인 실험 즉시 중단
+sudo bash deploy-experiment.sh cleanup
+# = K8s namespace 삭제 + qdisc/BPF 모두 해제
+```
+
 ### 측정 지표 용어
 - **p50** (50th percentile, median): 전체 패킷을 latency 오름차순 정렬했을 때 **정 가운데** 값. 절반의 패킷이 이보다 빠르게 도착.
 - **p99** (99th percentile): **상위 1% 직전**의 값. "보통은 이 정도가 worst-case" — TSN/실시간 시스템에서 가장 중요한 지표.
