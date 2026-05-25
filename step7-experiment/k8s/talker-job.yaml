@@ -157,6 +157,7 @@ spec:
             - "--count=10000"
             - "--size=128"
             - "--log=/data/talker-log.csv"
+            - "--vlan-priority=3"   # SO_PRIORITY=3 → prio qdisc band 0 (TSN)
           volumeMounts:
             - name: script
               mountPath: /app
