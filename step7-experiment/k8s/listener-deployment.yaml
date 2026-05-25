@@ -1,0 +1,77 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: listener-svc
+  namespace: tsn-experiment
+spec:
+  selector:
+    app: listener
+  ports:
+    - protocol: UDP
+      port: 5000
+      targetPort: 5000
+  clusterIP: None  # Headless — 직접 Pod IP 접근
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: listener-data
+  namespace: tsn-experiment
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: listener
+  namespace: tsn-experiment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: listener
+  template:
+    metadata:
+      labels:
+        app: listener
+    spec:
+      # worker 노드에 배치
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: DoesNotExist
+      containers:
+        - name: listener
+          image: tsn-listener:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--port=5000"
+            - "--interval=1"
+            - "--timeout=60"
+            - "--output=/data/results.csv"
+          ports:
+            - containerPort: 5000
+              protocol: UDP
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "500m"
+              memory: "128Mi"
+          securityContext:
+            capabilities:
+              add: ["NET_ADMIN", "SYS_NICE"]
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: listener-data

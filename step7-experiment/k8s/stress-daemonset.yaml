@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: cpu-stress
+  namespace: tsn-experiment
+spec:
+  selector:
+    matchLabels:
+      app: cpu-stress
+  template:
+    metadata:
+      labels:
+        app: cpu-stress
+    spec:
+      tolerations:
+        - operator: Exists  # 모든 노드에 배치
+      containers:
+        - name: stress
+          image: alexeiled/stress-ng:latest
+          # CPU 사용률을 조정하려면 아래 args 수정
+          # --cpu N: CPU 워커 수, --cpu-load P: 목표 사용률 (%)
+          args:
+            - "--cpu"
+            - "2"           # CPU 워커 2개 (VM 4코어 중 비격리 코어 대상)
+            - "--cpu-load"
+            - "99"          # 99% CPU 부하 (논문 최대 부하 시나리오)
+            - "--timeout"
+            - "600s"        # 10분 동안 부하
+            - "--cpu-method"
+            - "matrixprod"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "32Mi"
+            limits:
+              # isolcpus로 격리된 CPU는 사용하지 않음
+              cpu: "2000m"
+              memory: "64Mi"
+---
+# CPU 부하 수준별 설정 예시
+# 10% 부하 (idle 시나리오):
+#   args: ["--cpu", "2", "--cpu-load", "10", "--timeout", "600s"]
+# 50% 부하:
+#   args: ["--cpu", "2", "--cpu-load", "50", "--timeout", "600s"]
+# 99% 부하 (논문 최대 경쟁 시나리오):
+#   args: ["--cpu", "2", "--cpu-load", "99", "--timeout", "600s"]

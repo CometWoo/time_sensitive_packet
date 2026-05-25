@@ -1,0 +1,47 @@
+{
+    "configurations": [
+        {
+            "name": "eBPF (Linux VM Remote)",
+            "includePath": [
+                "${workspaceFolder}/src",
+                "/usr/include",
+                "/usr/include/bpf",
+                "/usr/include/x86_64-linux-gnu",
+                "/usr/src/linux-headers-*/include",
+                "/usr/src/linux-headers-*/include/uapi",
+                "/usr/src/linux-headers-*/arch/x86/include",
+                "/usr/src/linux-headers-*/arch/x86/include/uapi",
+                "/usr/src/linux-headers-*/arch/x86/include/generated",
+                "/usr/src/linux-headers-*/arch/x86/include/generated/uapi"
+            ],
+            "defines": [
+                "__TARGET_ARCH_x86",
+                "__KERNEL__",
+                "__BPF_TRACING__"
+            ],
+            "compilerPath": "/usr/bin/clang",
+            "cStandard": "gnu17",
+            "intelliSenseMode": "linux-clang-x64",
+            "compilerArgs": [
+                "-target",
+                "bpf"
+            ]
+        },
+        {
+            "name": "eBPF (Windows Host - 참조 전용)",
+            "includePath": [
+                "${workspaceFolder}/src",
+                "${workspaceFolder}/stub-headers"
+            ],
+            "defines": [
+                "__TARGET_ARCH_x86",
+                "__KERNEL__",
+                "__BPF_TRACING__",
+                "_WINDOWS_STUB_"
+            ],
+            "cStandard": "gnu17",
+            "intelliSenseMode": "windows-msvc-x64"
+        }
+    ],
+    "version": 4
+}
