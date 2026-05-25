@@ -150,19 +150,19 @@ setup_tc_qdisc() {
 
     # ETF: tc0 (time-sensitive queue)에 txtime 스케줄링
     log_info "ETF 설정 (tc0)..."
-    tc qdisc add dev "$PHYS_IF" parent 100:1 handle 10: etf \
+    if tc qdisc add dev "$PHYS_IF" parent 100:1 handle 10: etf \
         clockid CLOCK_TAI \
         delta 150000 \
-        deadline_mode on 2>/dev/null && {
+        deadline_mode on 2>/dev/null; then
         log_info "ETF 설정 완료"
-    } || {
+    else
         log_warn "ETF 설정 실패 (CLOCK_TAI 미지원 가능성). CLOCK_REALTIME으로 재시도..."
-        tc qdisc add dev "$PHYS_IF" parent 100:1 handle 10: etf \
+        if ! tc qdisc add dev "$PHYS_IF" parent 100:1 handle 10: etf \
             clockid CLOCK_REALTIME \
             delta 150000 \
-            deadline_mode on 2>/dev/null || {
+            deadline_mode on 2>/dev/null; then
             log_warn "ETF 설정 불가 — mqprio만 사용합니다"
-        }
+        fi
     fi
 
     log_info "Qdisc 상태:"
