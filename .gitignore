@@ -1,0 +1,31 @@
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local logs / temporary diagnostic dumps
+*.log
+master_status.txt
+worker01_status.txt
+/tmp/
+
+# eBPF intermediate build artifacts (keep final .bpf.o for distribution)
+step6-ebpf/build/*.o
+!step6-ebpf/build/*.bpf.o
+step6-ebpf/build/*.d
+step6-ebpf/build/*.ll
+
+# Claude session / scratch dirs
+.claude/
