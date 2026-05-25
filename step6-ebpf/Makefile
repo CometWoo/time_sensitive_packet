@@ -52,6 +52,8 @@ PROGS    := veth_filter egress ingress xdp_vlan_avtp
 
 OBJS     := $(addprefix $(BUILDDIR)/, $(addsuffix .bpf.o, $(PROGS)))
 
+.DEFAULT_GOAL := all
+
 .PHONY: all clean install verify check-env debug-build help
 
 help:

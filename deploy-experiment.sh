@@ -72,7 +72,7 @@ setup_ebpf() {
 
         log_info "eBPF 프로그램 컴파일..."
         make clean 2>/dev/null || true
-        make DEBUG=2
+        make all DEBUG=2
         log_info "컴파일 완료: $(ls build/*.bpf.o 2>/dev/null | tr '\n' ' ')"
     fi
 
@@ -356,9 +356,9 @@ case "${1:-help}" in
             fi
         done
         make clean 2>/dev/null || true
-        make DEBUG=2
+        make all DEBUG=2
         log_info "컴파일 완료. 다른 노드로 배포하려면:"
-        log_info "  git add step6-ebpf/build/ && git commit && git push"
+        log_info "  cd $SCRIPT_DIR && git add step6-ebpf/build/ && git commit -m 'add pre-built ebpf' && git push"
         log_info "  (다른 노드에서) git pull"
         ;;
     setup-ebpf)
