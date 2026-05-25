@@ -1,4 +1,152 @@
 apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: listener-script
+  namespace: tsn-experiment
+data:
+  listener.py: |
+    #!/usr/bin/env python3
+    """listener.py — UDP 패킷 수신 및 latency/jitter 측정"""
+    import argparse
+    import socket
+    import struct
+    import time
+    import sys
+    import os
+    import csv
+
+    PKT_HEADER_FMT = "!IQ"
+    PKT_HEADER_SIZE = struct.calcsize(PKT_HEADER_FMT)
+
+    def set_cpu_affinity(cpu_id):
+        try:
+            os.sched_setaffinity(0, {cpu_id})
+            print(f"CPU affinity 설정: CPU {cpu_id}")
+        except Exception as e:
+            print(f"CPU affinity 설정 실패: {e}")
+
+    def main():
+        parser = argparse.ArgumentParser(description="TSN Listener — UDP 수신 및 측정")
+        parser.add_argument("--port", type=int, default=5000)
+        parser.add_argument("--interval", type=float, default=1.0)
+        parser.add_argument("--timeout", type=float, default=30.0)
+        parser.add_argument("--output", default="results.csv")
+        parser.add_argument("--cpu", type=int, default=-1)
+        args = parser.parse_args()
+
+        expected_interval_ns = int(args.interval * 1e6)
+
+        if args.cpu >= 0:
+            set_cpu_affinity(args.cpu)
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("0.0.0.0", args.port))
+        sock.settimeout(args.timeout)
+
+        print(f"Listener 시작: 0.0.0.0:{args.port}")
+        print(f"  예상 간격: {args.interval}ms, 타임아웃: {args.timeout}s")
+        print("-" * 60)
+
+        results = []
+        prev_recv_ns = None
+        total_bytes = 0
+        start_time = None
+
+        try:
+            while True:
+                try:
+                    data, addr = sock.recvfrom(65535)
+                except socket.timeout:
+                    if results:
+                        print(f"\n타임아웃 — 수신 완료 ({len(results)} 패킷)")
+                        break
+                    else:
+                        print("대기 중... (패킷 미수신)")
+                        continue
+
+                recv_ns = time.time_ns()
+                if start_time is None:
+                    start_time = recv_ns
+
+                if len(data) < PKT_HEADER_SIZE:
+                    continue
+
+                seq, send_ns = struct.unpack(PKT_HEADER_FMT, data[:PKT_HEADER_SIZE])
+                pkt_size = len(data)
+                total_bytes += pkt_size
+
+                latency_ns = recv_ns - send_ns
+                latency_ms = latency_ns / 1e6
+
+                jitter_us = 0.0
+                if prev_recv_ns is not None:
+                    expected_recv = prev_recv_ns + expected_interval_ns
+                    jitter_ns = recv_ns - expected_recv
+                    jitter_us = jitter_ns / 1e3
+
+                prev_recv_ns = recv_ns
+
+                results.append({
+                    "seq": seq,
+                    "send_ns": send_ns,
+                    "recv_ns": recv_ns,
+                    "latency_ms": latency_ms,
+                    "jitter_us": jitter_us,
+                    "pkt_size": pkt_size,
+                })
+
+                if len(results) % 1000 == 0:
+                    elapsed = (recv_ns - start_time) / 1e9
+                    bw = total_bytes / elapsed if elapsed > 0 else 0
+                    print(f"  수신: {len(results)} pkts, "
+                          f"BW: {bw/1024:.1f} KB/s, "
+                          f"Latency: {latency_ms:.3f}ms, "
+                          f"Jitter: {jitter_us:.1f}μs")
+
+        except KeyboardInterrupt:
+            print("\n중단됨")
+
+        sock.close()
+
+        if not results:
+            print("수신된 패킷 없음")
+            return
+
+        elapsed_s = (results[-1]["recv_ns"] - results[0]["recv_ns"]) / 1e9
+        latencies = [r["latency_ms"] for r in results]
+        jitters = [abs(r["jitter_us"]) for r in results[1:]]
+
+        print("-" * 60)
+        print(f"총 수신: {len(results)} 패킷")
+        print(f"소요 시간: {elapsed_s:.2f}s")
+        print(f"Bandwidth: {total_bytes / elapsed_s / 1024:.2f} KB/s")
+        print(f"Latency (ms): min={min(latencies):.3f}, "
+              f"median={sorted(latencies)[len(latencies)//2]:.3f}, "
+              f"max={max(latencies):.3f}, "
+              f"avg={sum(latencies)/len(latencies):.3f}")
+        if jitters:
+            print(f"Jitter (μs): min={min(jitters):.1f}, "
+                  f"median={sorted(jitters)[len(jitters)//2]:.1f}, "
+                  f"max={max(jitters):.1f}, "
+                  f"avg={sum(jitters)/len(jitters):.1f}")
+
+        if results:
+            expected = results[-1]["seq"] - results[0]["seq"] + 1
+            loss = expected - len(results)
+            print(f"패킷 손실: {loss}/{expected} ({loss/expected*100:.2f}%)")
+
+        os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+        with open(args.output, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=results[0].keys())
+            writer.writeheader()
+            writer.writerows(results)
+        print(f"\n결과 저장: {args.output}")
+
+    if __name__ == "__main__":
+        main()
+---
+apiVersion: v1
 kind: Service
 metadata:
   name: listener-svc
@@ -10,18 +158,7 @@ spec:
     - protocol: UDP
       port: 5000
       targetPort: 5000
-  clusterIP: None  # Headless — 직접 Pod IP 접근
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: listener-data
-  namespace: tsn-experiment
-spec:
-  accessModes: ["ReadWriteOnce"]
-  resources:
-    requests:
-      storage: 1Gi
+  clusterIP: None
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -38,7 +175,6 @@ spec:
       labels:
         app: listener
     spec:
-      # worker 노드에 배치
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -48,8 +184,8 @@ spec:
                     operator: DoesNotExist
       containers:
         - name: listener
-          image: tsn-listener:latest
-          imagePullPolicy: IfNotPresent
+          image: python:3.11-slim
+          command: ["python3", "/app/listener.py"]
           args:
             - "--port=5000"
             - "--interval=1"
@@ -59,6 +195,8 @@ spec:
             - containerPort: 5000
               protocol: UDP
           volumeMounts:
+            - name: script
+              mountPath: /app
             - name: data
               mountPath: /data
           resources:
@@ -72,6 +210,8 @@ spec:
             capabilities:
               add: ["NET_ADMIN", "SYS_NICE"]
       volumes:
+        - name: script
+          configMap:
+            name: listener-script
         - name: data
-          persistentVolumeClaim:
-            claimName: listener-data
+          emptyDir: {}

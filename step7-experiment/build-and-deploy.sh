@@ -14,20 +14,21 @@ NAMESPACE="tsn-experiment"
 
 build_images() {
     echo "=========================================="
-    echo " Docker 이미지 빌드"
+    echo " 이미지 준비 (ConfigMap 방식 — 빌드 불필요)"
     echo "=========================================="
 
-    docker build -t tsn-talker:latest "$SCRIPT_DIR/talker/"
-    docker build -t tsn-listener:latest "$SCRIPT_DIR/listener/"
-
-    echo -e "\n이미지 빌드 완료:"
-    docker images | grep tsn-
-
-    # containerd로 이미지 전달 (kubeadm 환경)
-    echo -e "\ncontainerd로 이미지 import..."
-    docker save tsn-talker:latest | sudo ctr -n k8s.io images import -
-    docker save tsn-listener:latest | sudo ctr -n k8s.io images import -
-    echo "import 완료"
+    echo "python:3.11-slim base image 확인..."
+    if sudo ctr -n k8s.io images ls 2>/dev/null | grep -q "python.*3.11-slim"; then
+        echo "python:3.11-slim 이미지 이미 존재"
+    else
+        echo "python:3.11-slim 이미지 pull..."
+        sudo ctr -n k8s.io images pull docker.io/library/python:3.11-slim || {
+            echo "WARNING: pull 실패 — Pod 생성 시 kubelet이 자동 pull합니다"
+        }
+    fi
+    echo ""
+    echo "talker/listener 스크립트는 ConfigMap으로 전달됩니다."
+    echo "커스텀 Docker 이미지 빌드가 필요 없습니다."
 }
 
 deploy() {

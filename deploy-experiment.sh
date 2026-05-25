@@ -181,41 +181,34 @@ remove_tc_qdisc() {
 deploy_k8s() {
     log_info "=== K8s 실험 배포 ==="
 
+    # 기존 리소스 정리
+    log_info "기존 리소스 정리..."
+    kubectl delete namespace tsn-experiment --ignore-not-found=true 2>/dev/null || true
+    sleep 5
+
     # 네임스페이스 생성
     kubectl apply -f "$K8S_DIR/namespace.yaml"
 
-    # Docker 이미지 빌드 (containerd)
-    log_info "Talker 이미지 빌드..."
-    cd "$EXPERIMENT_DIR/talker"
-    if command -v nerdctl &>/dev/null; then
-        nerdctl build -t tsn-talker:latest .
-    elif command -v docker &>/dev/null; then
-        docker build -t tsn-talker:latest .
-        docker save tsn-talker:latest | ctr -n k8s.io images import -
+    # python:3.11-slim 이미지가 노드에 있는지 확인
+    log_info "python:3.11-slim 이미지 확인..."
+    if sudo ctr -n k8s.io images ls | grep -q "python.*3.11-slim"; then
+        log_info "python:3.11-slim 이미지 존재 확인"
     else
-        log_warn "nerdctl/docker 없음 — 이미지가 이미 있다고 가정합니다"
+        log_warn "python:3.11-slim 이미지가 없습니다. Pod 생성 시 자동 pull 됩니다."
+        log_warn "인터넷 연결이 필요합니다. 오프라인이면 수동으로 import 하세요:"
+        log_warn "  sudo ctr -n k8s.io images pull docker.io/library/python:3.11-slim"
     fi
 
-    log_info "Listener 이미지 빌드..."
-    cd "$EXPERIMENT_DIR/listener"
-    if command -v nerdctl &>/dev/null; then
-        nerdctl build -t tsn-listener:latest .
-    elif command -v docker &>/dev/null; then
-        docker build -t tsn-listener:latest .
-        docker save tsn-listener:latest | ctr -n k8s.io images import -
-    else
-        log_warn "nerdctl/docker 없음 — 이미지가 이미 있다고 가정합니다"
-    fi
-
-    # Listener 배포 (worker01에서 실행되도록)
-    log_info "Listener 배포..."
+    # Listener 배포 (ConfigMap + python:3.11-slim)
+    log_info "Listener 배포 (ConfigMap + base image)..."
     kubectl apply -f "$K8S_DIR/listener-deployment.yaml"
 
     # Listener pod 준비 대기
     log_info "Listener pod 준비 대기..."
-    kubectl -n tsn-experiment wait --for=condition=ready pod -l app=listener --timeout=120s || {
+    kubectl -n tsn-experiment wait --for=condition=ready pod -l app=listener --timeout=180s || {
         log_error "Listener pod가 준비되지 않았습니다"
-        kubectl -n tsn-experiment get pods
+        kubectl -n tsn-experiment get pods -o wide
+        kubectl -n tsn-experiment describe pod -l app=listener | tail -20
         exit 1
     }
 
@@ -241,35 +234,24 @@ run_experiment() {
         remove_tc_qdisc
     fi
 
-    # 이전 Job 정리
-    kubectl -n tsn-experiment delete job talker 2>/dev/null || true
-    kubectl -n tsn-experiment delete daemonset stress-ng 2>/dev/null || true
+    # 이전 Job/DaemonSet 정리
+    kubectl -n tsn-experiment delete job talker-run --ignore-not-found=true 2>/dev/null || true
+    kubectl -n tsn-experiment delete daemonset cpu-stress --ignore-not-found=true 2>/dev/null || true
     sleep 3
 
     # CPU 부하 생성
     log_info "CPU 부하 생성 (${CPU_LOAD}%)..."
-    cat "$K8S_DIR/stress-daemonset.yaml" | \
-        sed "s/--cpu-load [0-9]*/--cpu-load $CPU_LOAD/" | \
+    sed "s/\"99\"/\"$CPU_LOAD\"/" "$K8S_DIR/stress-daemonset.yaml" | \
         kubectl apply -f -
     sleep 5
 
-    # Talker Job 실행
+    # Talker ConfigMap + Job 배포
     log_info "Talker Job 실행..."
-    LISTENER_IP=$(kubectl -n tsn-experiment get pod -l app=listener -o jsonpath='{.items[0].status.podIP}')
-
-    # VLAN priority 설정 (proposed 모드에서 skb->priority=3 → tc0)
-    local VLAN_PRI_ARG=""
-    if [ "$MODE" = "proposed" ]; then
-        VLAN_PRI_ARG="--vlan-priority 3"
-    fi
-
-    cat "$K8S_DIR/talker-job.yaml" | \
-        sed "s/--target .*/--target $LISTENER_IP $VLAN_PRI_ARG/" | \
-        kubectl apply -f -
+    kubectl apply -f "$K8S_DIR/talker-job.yaml"
 
     # Talker 완료 대기
     log_info "Talker 완료 대기 (최대 5분)..."
-    kubectl -n tsn-experiment wait --for=condition=complete job/talker --timeout=300s || {
+    kubectl -n tsn-experiment wait --for=condition=complete job/talker-run --timeout=300s || {
         log_warn "Talker Job 타임아웃"
     }
 
