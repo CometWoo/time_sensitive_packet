@@ -2,13 +2,8 @@
  * 논문의 eBPF 프로그램: veth-filter(vef), egress(eg), ingress(ig)
  * 커널 5.15 기준 BPF helper 및 구조체 사용
  *
- * ┌─────────────────────────────────────────────────────────────────┐
- * │ 빌드 환경 요구사항:                                             │
- * │   - OS: Ubuntu 22.04 (커널 5.15.x)                             │
- * │   - 패키지: clang, llvm, libbpf-dev, linux-headers-$(uname -r) │
- * │   - 이 코드는 Linux에서만 빌드 가능                             │
- * │   - Windows VS Code에서는 stub-headers로 IntelliSense 지원     │
- * └─────────────────────────────────────────────────────────────────┘
+ * 빌드: clang + stub-headers만 사용 (커널 내부 헤더 불필요)
+ *   sudo apt install clang make
  */
 #ifndef __TSN_COMMON_H__
 #define __TSN_COMMON_H__

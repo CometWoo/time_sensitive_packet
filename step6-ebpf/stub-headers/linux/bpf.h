@@ -80,4 +80,23 @@ struct __sk_buff {
     __u32 gso_segs;
 };
 
+/* XDP action codes */
+enum xdp_action {
+    XDP_ABORTED = 0,
+    XDP_DROP,
+    XDP_PASS,
+    XDP_TX,
+    XDP_REDIRECT,
+};
+
+/* xdp_md — XDP 프로그램의 컨텍스트 구조체 */
+struct xdp_md {
+    __u32 data;
+    __u32 data_end;
+    __u32 data_meta;
+    __u32 ingress_ifindex;
+    __u32 rx_queue_index;
+    __u32 egress_ifindex;
+};
+
 #endif /* _STUB_LINUX_BPF_H */

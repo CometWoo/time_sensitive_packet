@@ -64,7 +64,7 @@ setup_ebpf() {
             if ! command -v $cmd &>/dev/null; then
                 log_error "$cmd 이 설치되어 있지 않습니다"
                 log_info "해결 방법 (택 1):"
-                log_info "  A) 이 노드에 빌드 도구 설치: sudo apt install clang llvm make libbpf-dev linux-headers-\$(uname -r)"
+                log_info "  A) 이 노드에 빌드 도구 설치: sudo apt install clang make"
                 log_info "  B) 빌드 가능한 노드에서 컴파일 후 step6-ebpf/build/ 디렉토리를 이 노드로 복사"
                 exit 1
             fi
@@ -351,7 +351,7 @@ case "${1:-help}" in
         for cmd in clang make; do
             if ! command -v $cmd &>/dev/null; then
                 log_error "$cmd 이 설치되어 있지 않습니다"
-                log_info "설치: sudo apt install clang llvm make libbpf-dev linux-headers-\$(uname -r)"
+                log_info "설치: sudo apt install clang make"
                 exit 1
             fi
         done

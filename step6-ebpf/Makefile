@@ -29,19 +29,14 @@ LIBBPF_HEADERS ?= /usr/include/bpf
 EXTRA_CFLAGS ?=
 
 # 컴파일 플래그
+# stub-headers를 최우선으로 사용 — 커널 내부 헤더 의존성 제거
+# 커널 6.x 내부 헤더는 BPF target과 호환되지 않음 (__cold, unlikely 등)
 BPF_CFLAGS := -g -O2 \
     -target bpf \
     -D__TARGET_ARCH_$(ARCH) \
+    -D__LITTLE_ENDIAN_BITFIELD \
     -DDEBUG_LEVEL=$(DEBUG) \
-    -I$(KERNEL_HEADERS)/include \
-    -I$(KERNEL_HEADERS)/include/uapi \
-    -I$(KERNEL_HEADERS)/arch/$(ARCH)/include \
-    -I$(KERNEL_HEADERS)/arch/$(ARCH)/include/uapi \
-    -I$(KERNEL_HEADERS)/arch/$(ARCH)/include/generated \
-    -I$(KERNEL_HEADERS)/arch/$(ARCH)/include/generated/uapi \
-    -I$(LIBBPF_HEADERS) \
-    -I/usr/include \
-    -I/usr/include/$(shell uname -m 2>/dev/null || echo "x86_64")-linux-gnu \
+    -Istub-headers \
     -Isrc \
     -Wall -Wno-unused-value \
     $(EXTRA_CFLAGS)
@@ -118,34 +113,18 @@ check-env:
 	    echo "  설치: sudo apt-get install clang llvm"; \
 	fi
 	@echo ""
-	@# 커널 헤더
-	@echo "── 커널 헤더 ──"
-	@if [ -d "$(KERNEL_HEADERS)" ]; then \
-	    echo "  [OK] $(KERNEL_HEADERS) 존재"; \
+	@# stub 헤더 확인
+	@echo "── stub-headers (BPF 전용 헤더) ──"
+	@if [ -f "stub-headers/linux/bpf.h" ]; then \
+	    echo "  [OK] stub-headers/linux/bpf.h 발견"; \
 	else \
-	    echo "  [FAIL] $(KERNEL_HEADERS) 없음"; \
-	    echo "  설치: sudo apt-get install linux-headers-$$(uname -r)"; \
+	    echo "  [FAIL] stub-headers/linux/bpf.h 없음"; \
+	    echo "  git pull 로 stub-headers 디렉토리를 받으세요"; \
 	fi
-	@if [ -f "$(KERNEL_HEADERS)/include/linux/bpf.h" ]; then \
-	    echo "  [OK] linux/bpf.h 발견"; \
+	@if [ -f "stub-headers/bpf/bpf_helpers.h" ]; then \
+	    echo "  [OK] stub-headers/bpf/bpf_helpers.h 발견"; \
 	else \
-	    echo "  [WARN] linux/bpf.h 없음 — uapi 경로 확인:"; \
-	    if [ -f "$(KERNEL_HEADERS)/include/uapi/linux/bpf.h" ]; then \
-	        echo "    [OK] uapi/linux/bpf.h 발견"; \
-	    else \
-	        echo "    [FAIL] bpf.h 없음"; \
-	    fi; \
-	fi
-	@echo ""
-	@# libbpf 헤더
-	@echo "── libbpf ──"
-	@if [ -f "$(LIBBPF_HEADERS)/bpf_helpers.h" ]; then \
-	    echo "  [OK] bpf/bpf_helpers.h 발견"; \
-	elif [ -f "/usr/include/bpf/bpf_helpers.h" ]; then \
-	    echo "  [OK] /usr/include/bpf/bpf_helpers.h 발견"; \
-	else \
-	    echo "  [FAIL] bpf_helpers.h 없음"; \
-	    echo "  설치: sudo apt-get install libbpf-dev"; \
+	    echo "  [FAIL] stub-headers/bpf/bpf_helpers.h 없음"; \
 	fi
 	@echo ""
 	@# bpftool
@@ -173,6 +152,10 @@ check-env:
 check-env-quiet:
 	@if ! command -v $(CLANG) >/dev/null 2>&1; then \
 	    echo "[ERROR] clang 미설치. 'make check-env'로 상세 확인"; \
+	    exit 1; \
+	fi
+	@if [ ! -f "stub-headers/linux/bpf.h" ]; then \
+	    echo "[ERROR] stub-headers 없음. step6-ebpf/ 디렉토리에서 실행하세요"; \
 	    exit 1; \
 	fi
 
