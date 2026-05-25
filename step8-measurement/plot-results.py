@@ -83,20 +83,36 @@ def get_partial_cpu_loads():
             or (RESULTS_DIR / f"proposed_cpu{c}.csv").exists()]
 
 
+def select_comparison_cpu_loads():
+    """비교 그래프(fig 2/4/6)용 CPU 부하 선택.
+    - low:     baseline+proposed 둘 다 있는 최저
+    - high:    baseline+proposed 둘 다 있는 최고
+    - extreme: 한쪽이라도 있는 최고 (high와 다를 때만 추가)
+    중복 제거 후 정렬해서 반환.
+    """
+    both = get_available_cpu_loads()
+    partial = get_partial_cpu_loads()
+    selected = set()
+    if both:
+        selected.add(both[0])   # low
+        selected.add(both[-1])  # high (both 있는 최고)
+    if partial:
+        selected.add(partial[-1])  # extreme (한쪽이라도 있는 최고)
+    if not selected and partial:
+        selected.update([partial[0], partial[-1]])
+    return sorted(selected)
+
+
 def percentile(values, p):
     return float(np.percentile(values, p)) if len(values) else 0.0
 
 
 def figure2_throughput():
-    """Figure 2: Throughput under low/high CPU utilization
-    양쪽(baseline+proposed) 모두 있는 CPU 부하에서 low/high 선택"""
-    avail = get_available_cpu_loads()
-    if not avail:
-        # fallback: 한쪽만이라도
-        avail = get_partial_cpu_loads()
-        if not avail:
-            return
-    targets = sorted(set([avail[0], avail[-1]]))
+    """Figure 2: Throughput across selected CPU utilizations
+    Low / High (둘 다 있는 최고) / Extreme (proposed만이라도) 3개 패널"""
+    targets = select_comparison_cpu_loads()
+    if not targets:
+        return
     fig, axes = plt.subplots(1, len(targets), figsize=(6 * len(targets), 5))
     if len(targets) == 1:
         axes = [axes]
@@ -216,13 +232,10 @@ def figure3_latency():
 
 
 def figure4_jitter_subset():
-    # baseline+proposed 둘 다 있는 CPU 우선 사용
-    avail = get_available_cpu_loads()
-    if not avail:
-        avail = get_partial_cpu_loads()
-        if not avail:
-            return
-    targets = sorted(set([avail[0], avail[-1]]))
+    """Figure 4: Jitter at low / high(both) / extreme(any) CPU loads — up to 3 panels"""
+    targets = select_comparison_cpu_loads()
+    if not targets:
+        return
     fig, axes = plt.subplots(1, len(targets), figsize=(7 * len(targets), 5))
     if len(targets) == 1:
         axes = [axes]
@@ -281,13 +294,10 @@ def figure5_jitter_all():
 
 
 def figure6_cdf():
-    # baseline+proposed 둘 다 있는 CPU 우선 사용
-    avail = get_available_cpu_loads()
-    if not avail:
-        avail = get_partial_cpu_loads()
-        if not avail:
-            return
-    targets = sorted(set([avail[0], avail[-1]]))
+    """Figure 6: CDF at low / high(both) / extreme(any) CPU loads — up to 3 panels"""
+    targets = select_comparison_cpu_loads()
+    if not targets:
+        return
     fig, axes = plt.subplots(1, len(targets), figsize=(7 * len(targets), 5))
     if len(targets) == 1:
         axes = [axes]

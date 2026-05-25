@@ -40,11 +40,12 @@ Cilium 기반 Kubernetes 클러스터에서 eBPF + TC `prio` qdisc 조합으로 
 - **CPU 부하 N%**: 백그라운드 `stress-ng` 데몬셋이 만드는 CPU 점유율. **p50/p99과는 무관한 별개 축**.
 
 ### 그래프 읽는 법
-- **Figure 3 (Latency)**: X축 CPU 부하, Y축 latency (ms, log scale). 그룹당 6개 막대: Baseline {p50, p99, max} + Proposed {p50, p99, max}. 색은 mode, 빗금은 percentile.
-- **Figure 5 (Jitter)**: Figure 3과 동일 구조의 jitter 버전.
-- **Figure 6 (CDF)**: 누적 분포. 곡선이 **좌상**에 가까울수록 빠르고 일관됨.
-- **Figure 4 (Jitter at low/high CPU)**: 가장 낮은/높은 CPU 부하만 따로 보는 비교.
-- **Figure 2 (Throughput)**: 1ms 간격 송신이므로 두 모드 모두 비슷한 ~125 KB/s (의도된 결과).
+- **Figure 2 / 4 / 6 (CPU 부하별 비교)**: 3개 패널로 표시 — `low` (둘 다 데이터 있는 최저 부하, 보통 10%), `high` (둘 다 있는 최고, 보통 70%), `extreme` (한쪽이라도 있는 최고, 보통 99% — 극단적 부하에서의 Proposed 추세 표시).
+- **Figure 2 (Throughput)**: 막대 그래프. 1ms 간격 송신이므로 두 모드 모두 ~125 KB/s (의도된 결과 — 우선순위 큐의 목적은 throughput이 아니라 latency 안정성).
+- **Figure 3 (Latency 전체)**: X축 CPU 부하, Y축 latency (ms, log scale). 그룹당 6개 막대: Baseline {p50, p99, max} + Proposed {p50, p99, max}. 색은 mode, 빗금은 percentile.
+- **Figure 4 (Jitter 비교)**: Baseline vs Proposed jitter 막대. 99% 패널은 Proposed만 — baseline은 worker01 다운 위험으로 미측정.
+- **Figure 5 (Jitter 전체)**: Figure 3과 동일 구조의 jitter 버전.
+- **Figure 6 (Latency CDF)**: 누적 분포. 곡선이 **좌상**에 가까울수록 빠르고 일관됨. 99% 패널의 Proposed 단독 곡선은 극단 부하에서도 latency가 ~1ms 근처에 모이는지 보여줌.
 
 ---
 
