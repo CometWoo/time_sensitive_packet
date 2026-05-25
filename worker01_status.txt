@@ -1,0 +1,188 @@
+orker@k8s-worker01:~/Desktop$ echo "=== HOSTNAME ===" && hostname && echo "=== OS ===" && cat /etc/os-release | head -5 && echo "=== KERNEL ===" && uname -r && echo "=== CPU/MEM ===" && nproc && free -h
+=== HOSTNAME ===
+k8s-worker01
+=== OS ===
+PRETTY_NAME="Ubuntu 24.04.4 LTS"
+NAME="Ubuntu"
+VERSION_ID="24.04"
+VERSION="24.04.4 LTS (Noble Numbat)"
+VERSION_CODENAME=noble
+=== KERNEL ===
+6.17.0-20-generic
+=== CPU/MEM ===
+2
+total        used        free      shared  buff/cache   available
+Mem:           3.8Gi       2.3Gi       103Mi        68Mi       1.5Gi       1.5Gi
+Swap:             0B          0B          0B
+worker@k8s-worker01:~/Desktop$ echo "=== IP ADDR ===" && ip addr show && echo "=== ROUTES ===" && ip route && echo "=== NIC ===" && ip link show
+=== IP ADDR ===
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
+link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+inet 127.0.0.1/8 scope host lo
+valid_lft forever preferred_lft forever
+inet6 ::1/128 scope host noprefixroute
+valid_lft forever preferred_lft forever
+2: enp0s3: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UP group default qlen 1000
+link/ether 08:00:27:f7:cf:c7 brd ff:ff:ff:ff:ff:ff
+inet 10.0.2.4/24 brd 10.0.2.255 scope global dynamic noprefixroute enp0s3
+valid_lft 532sec preferred_lft 532sec
+inet6 fe80::6997:feab:c731:30/64 scope link noprefixroute
+valid_lft forever preferred_lft forever
+3: cilium_net@cilium_host: <BROADCAST,MULTICAST,NOARP,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default
+link/ether 6a:f1:9b:ee:63:a8 brd ff:ff:ff:ff:ff:ff
+inet6 fe80::68f1:9bff:feee:63a8/64 scope link
+valid_lft forever preferred_lft forever
+4: cilium_host@cilium_net: <BROADCAST,MULTICAST,NOARP,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+link/ether fa:a3:17:0e:38:be brd ff:ff:ff:ff:ff:ff
+inet 172.16.1.60/32 scope global cilium_host
+valid_lft forever preferred_lft forever
+inet6 fe80::f8a3:17ff:fe0e:38be/64 scope link
+valid_lft forever preferred_lft forever
+6: lxc_health@if5: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+link/ether ca:f9:c6:24:4f:99 brd ff:ff:ff:ff:ff:ff link-netnsid 0
+inet6 fe80::c8f9:c6ff:fe24:4f99/64 scope link
+valid_lft forever preferred_lft forever
+8: lxc2da7841eddc4@if7: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+link/ether 12:ad:d5:df:ad:1a brd ff:ff:ff:ff:ff:ff link-netns cni-6809bfbb-7516-c2ba-9e33-4606c70edae9
+inet6 fe80::10ad:d5ff:fedf:ad1a/64 scope link
+valid_lft forever preferred_lft forever
+10: lxca4f2a158544d@if9: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+link/ether 72:88:e4:be:f1:1c brd ff:ff:ff:ff:ff:ff link-netns cni-b1481e15-fed3-b540-1a39-7a662ecf75f1
+inet6 fe80::7088:e4ff:febe:f11c/64 scope link
+valid_lft forever preferred_lft forever
+12: lxc70fbaecd7e1f@if11: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+link/ether 82:d8:f7:e5:92:e9 brd ff:ff:ff:ff:ff:ff link-netns cni-b732976a-6a2d-9f2a-e6ca-92c52d520471
+inet6 fe80::80d8:f7ff:fee5:92e9/64 scope link
+valid_lft forever preferred_lft forever
+14: lxc3c815b4dbd00@if13: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+link/ether de:46:38:ca:21:06 brd ff:ff:ff:ff:ff:ff link-netns cni-07c30272-5f7a-25cd-1982-4a64fdcadd05
+inet6 fe80::dc46:38ff:feca:2106/64 scope link
+valid_lft forever preferred_lft forever
+16: lxcafa064767401@if15: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+link/ether ca:f0:81:8b:38:75 brd ff:ff:ff:ff:ff:ff link-netns cni-5d8f6b76-a7a6-f0e5-1db1-73c321afd6ea
+inet6 fe80::c8f0:81ff:fe8b:3875/64 scope link
+valid_lft forever preferred_lft forever
+18: lxcfec19fa4a4d4@if17: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+link/ether c6:e2:3a:0f:d8:7f brd ff:ff:ff:ff:ff:ff link-netns cni-908b27b8-7163-f7e7-a282-00b4b57353f8
+inet6 fe80::c4e2:3aff:fe0f:d87f/64 scope link
+valid_lft forever preferred_lft forever
+20: lxcc2b9181326a4@if19: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+link/ether 86:7c:37:4f:f3:f1 brd ff:ff:ff:ff:ff:ff link-netns cni-caa334d9-4197-0d19-779f-9c02adc6b31f
+inet6 fe80::847c:37ff:fe4f:f3f1/64 scope link
+valid_lft forever preferred_lft forever
+22: lxc966bfaa629dd@if21: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+link/ether 62:51:cd:2b:45:01 brd ff:ff:ff:ff:ff:ff link-netns cni-3f707e0d-e6de-2d3a-aa3f-0262a8b61511
+inet6 fe80::6051:cdff:fe2b:4501/64 scope link
+valid_lft forever preferred_lft forever
+24: lxc2c156fd538ea@if23: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+link/ether ea:da:6e:6b:62:8b brd ff:ff:ff:ff:ff:ff link-netns cni-b471a321-91ad-3105-c8ba-3283dc9b2447
+inet6 fe80::e8da:6eff:fe6b:628b/64 scope link
+valid_lft forever preferred_lft forever
+26: lxc9d9c64491544@if25: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+link/ether 7a:9a:fb:bb:c7:3c brd ff:ff:ff:ff:ff:ff link-netns cni-d03f7a8c-b7ba-27e8-9a4e-d715236c50f2
+inet6 fe80::789a:fbff:febb:c73c/64 scope link
+valid_lft forever preferred_lft forever
+28: lxc94018452f9fb@if27: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+link/ether ee:03:d3:4f:dc:12 brd ff:ff:ff:ff:ff:ff link-netns cni-5f0aa3e9-ccad-8376-d653-8b2bf91e30a9
+inet6 fe80::ec03:d3ff:fe4f:dc12/64 scope link
+valid_lft forever preferred_lft forever
+30: lxce2fd2e4e44cf@if29: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
+link/ether 06:c5:cc:f8:f8:89 brd ff:ff:ff:ff:ff:ff link-netns cni-94b5426c-82c0-8f08-df26-63982baf66c0
+inet6 fe80::4c5:ccff:fef8:f889/64 scope link
+valid_lft forever preferred_lft forever
+=== ROUTES ===
+default via 10.0.2.1 dev enp0s3 proto dhcp src 10.0.2.4 metric 100
+10.0.2.0/24 dev enp0s3 proto kernel scope link src 10.0.2.4 metric 100
+172.16.0.0/24 via 10.0.2.8 dev enp0s3 proto kernel
+172.16.1.0/24 via 172.16.1.60 dev cilium_host proto kernel src 172.16.1.60
+172.16.1.60 dev cilium_host proto kernel scope link
+172.16.2.0/24 via 10.0.2.6 dev enp0s3 proto kernel
+172.16.3.0/24 via 10.0.2.5 dev enp0s3 proto kernel
+=== NIC ===
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000
+link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+2: enp0s3: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UP mode DEFAULT group default qlen 1000
+link/ether 08:00:27:f7:cf:c7 brd ff:ff:ff:ff:ff:ff
+3: cilium_net@cilium_host: <BROADCAST,MULTICAST,NOARP,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default
+link/ether 6a:f1:9b:ee:63:a8 brd ff:ff:ff:ff:ff:ff
+4: cilium_host@cilium_net: <BROADCAST,MULTICAST,NOARP,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether fa:a3:17:0e:38:be brd ff:ff:ff:ff:ff:ff
+6: lxc_health@if5: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether ca:f9:c6:24:4f:99 brd ff:ff:ff:ff:ff:ff link-netnsid 0
+8: lxc2da7841eddc4@if7: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether 12:ad:d5:df:ad:1a brd ff:ff:ff:ff:ff:ff link-netns cni-6809bfbb-7516-c2ba-9e33-4606c70edae9
+10: lxca4f2a158544d@if9: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether 72:88:e4:be:f1:1c brd ff:ff:ff:ff:ff:ff link-netns cni-b1481e15-fed3-b540-1a39-7a662ecf75f1
+12: lxc70fbaecd7e1f@if11: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether 82:d8:f7:e5:92:e9 brd ff:ff:ff:ff:ff:ff link-netns cni-b732976a-6a2d-9f2a-e6ca-92c52d520471
+14: lxc3c815b4dbd00@if13: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether de:46:38:ca:21:06 brd ff:ff:ff:ff:ff:ff link-netns cni-07c30272-5f7a-25cd-1982-4a64fdcadd05
+16: lxcafa064767401@if15: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether ca:f0:81:8b:38:75 brd ff:ff:ff:ff:ff:ff link-netns cni-5d8f6b76-a7a6-f0e5-1db1-73c321afd6ea
+18: lxcfec19fa4a4d4@if17: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether c6:e2:3a:0f:d8:7f brd ff:ff:ff:ff:ff:ff link-netns cni-908b27b8-7163-f7e7-a282-00b4b57353f8
+20: lxcc2b9181326a4@if19: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether 86:7c:37:4f:f3:f1 brd ff:ff:ff:ff:ff:ff link-netns cni-caa334d9-4197-0d19-779f-9c02adc6b31f
+22: lxc966bfaa629dd@if21: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether 62:51:cd:2b:45:01 brd ff:ff:ff:ff:ff:ff link-netns cni-3f707e0d-e6de-2d3a-aa3f-0262a8b61511
+24: lxc2c156fd538ea@if23: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether ea:da:6e:6b:62:8b brd ff:ff:ff:ff:ff:ff link-netns cni-b471a321-91ad-3105-c8ba-3283dc9b2447
+26: lxc9d9c64491544@if25: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether 7a:9a:fb:bb:c7:3c brd ff:ff:ff:ff:ff:ff link-netns cni-d03f7a8c-b7ba-27e8-9a4e-d715236c50f2
+28: lxc94018452f9fb@if27: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether ee:03:d3:4f:dc:12 brd ff:ff:ff:ff:ff:ff link-netns cni-5f0aa3e9-ccad-8376-d653-8b2bf91e30a9
+30: lxce2fd2e4e44cf@if29: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether 06:c5:cc:f8:f8:89 brd ff:ff:ff:ff:ff:ff link-netns cni-94b5426c-82c0-8f08-df26-63982baf66c0
+worker@k8s-worker01:~/Desktop$ echo "=== K8S VERSION ===" && kubectl version --short 2>/dev/null || kubeadm version && echo "=== NODES ===" && kubectl get nodes -o wide && echo "=== PODS ===" && kubectl get pods -A -o wide
+=== K8S VERSION ===
+kubeadm version: &[version.Info](http://version.info/){Major:"1", Minor:"30", GitVersion:"v1.30.14", GitCommit:"9e18483918821121abdf9aa82bc14d66df5d68cd", GitTreeState:"clean", BuildDate:"2025-06-17T18:34:53Z", GoVersion:"go1.23.10", Compiler:"gc", Platform:"linux/amd64"}
+=== NODES ===
+E0525 14:11:41.663366    6697 memcache.go:265] couldn't get current server API group list: Get "http://localhost:8080/api?timeout=32s": dial tcp 127.0.0.1:8080: connect: connection refused
+E0525 14:11:41.664058    6697 memcache.go:265] couldn't get current server API group list: Get "http://localhost:8080/api?timeout=32s": dial tcp 127.0.0.1:8080: connect: connection refused
+E0525 14:11:41.665398    6697 memcache.go:265] couldn't get current server API group list: Get "http://localhost:8080/api?timeout=32s": dial tcp 127.0.0.1:8080: connect: connection refused
+E0525 14:11:41.665511    6697 memcache.go:265] couldn't get current server API group list: Get "http://localhost:8080/api?timeout=32s": dial tcp 127.0.0.1:8080: connect: connection refused
+E0525 14:11:41.668327    6697 memcache.go:265] couldn't get current server API group list: Get "http://localhost:8080/api?timeout=32s": dial tcp 127.0.0.1:8080: connect: connection refused
+The connection to the server localhost:8080 was refused - did you specify the right host or port?
+worker@k8s-worker01:~/Desktop$ echo "=== CILIUM STATUS ===" && cilium status && echo "=== CILIUM VERSION ===" && cilium version && echo "=== CILIUM PODS ===" && kubectl get pods -n kube-system -l k8s-app=cilium -o wide
+=== CILIUM STATUS ===
+cilium: command not found
+worker@k8s-worker01:~/Desktop$ sudo echo "=== BPF SUPPORT ===" && sudo ls /sys/fs/bpf && echo "=== BPF PROGS ===" && bpftool prog list 2>/dev/null | head -20 && echo "=== BPF MAPS ===" && bpftool map list 2>/dev/null | head -20
+=== BPF SUPPORT ===
+cilium	snap  tc
+=== BPF PROGS ===
+=== BPF MAPS ===
+worker@k8s-worker01:~/Desktop$ echo "=== VETH/BRIDGE ===" && ip link show type veth && ip link show type bridge && echo "=== TC FILTERS ===" && for i in $(ip link show | awk -F': ' '{print $2}' | grep -v '@'); do echo "--- $i ---"; tc filter show dev $i ingress 2>/dev/null; tc filter show dev $i egress 2>/dev/null; done
+=== VETH/BRIDGE ===
+3: cilium_net@cilium_host: <BROADCAST,MULTICAST,NOARP,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default
+link/ether 6a:f1:9b:ee:63:a8 brd ff:ff:ff:ff:ff:ff
+4: cilium_host@cilium_net: <BROADCAST,MULTICAST,NOARP,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether fa:a3:17:0e:38:be brd ff:ff:ff:ff:ff:ff
+6: lxc_health@if5: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether ca:f9:c6:24:4f:99 brd ff:ff:ff:ff:ff:ff link-netnsid 0
+8: lxc2da7841eddc4@if7: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether 12:ad:d5:df:ad:1a brd ff:ff:ff:ff:ff:ff link-netns cni-6809bfbb-7516-c2ba-9e33-4606c70edae9
+10: lxca4f2a158544d@if9: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether 72:88:e4:be:f1:1c brd ff:ff:ff:ff:ff:ff link-netns cni-b1481e15-fed3-b540-1a39-7a662ecf75f1
+12: lxc70fbaecd7e1f@if11: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether 82:d8:f7:e5:92:e9 brd ff:ff:ff:ff:ff:ff link-netns cni-b732976a-6a2d-9f2a-e6ca-92c52d520471
+14: lxc3c815b4dbd00@if13: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether de:46:38:ca:21:06 brd ff:ff:ff:ff:ff:ff link-netns cni-07c30272-5f7a-25cd-1982-4a64fdcadd05
+16: lxcafa064767401@if15: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether ca:f0:81:8b:38:75 brd ff:ff:ff:ff:ff:ff link-netns cni-5d8f6b76-a7a6-f0e5-1db1-73c321afd6ea
+18: lxcfec19fa4a4d4@if17: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether c6:e2:3a:0f:d8:7f brd ff:ff:ff:ff:ff:ff link-netns cni-908b27b8-7163-f7e7-a282-00b4b57353f8
+20: lxcc2b9181326a4@if19: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether 86:7c:37:4f:f3:f1 brd ff:ff:ff:ff:ff:ff link-netns cni-caa334d9-4197-0d19-779f-9c02adc6b31f
+22: lxc966bfaa629dd@if21: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether 62:51:cd:2b:45:01 brd ff:ff:ff:ff:ff:ff link-netns cni-3f707e0d-e6de-2d3a-aa3f-0262a8b61511
+24: lxc2c156fd538ea@if23: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether ea:da:6e:6b:62:8b brd ff:ff:ff:ff:ff:ff link-netns cni-b471a321-91ad-3105-c8ba-3283dc9b2447
+26: lxc9d9c64491544@if25: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether 7a:9a:fb:bb:c7:3c brd ff:ff:ff:ff:ff:ff link-netns cni-d03f7a8c-b7ba-27e8-9a4e-d715236c50f2
+28: lxc94018452f9fb@if27: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether ee:03:d3:4f:dc:12 brd ff:ff:ff:ff:ff:ff link-netns cni-5f0aa3e9-ccad-8376-d653-8b2bf91e30a9
+30: lxce2fd2e4e44cf@if29: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+link/ether 06:c5:cc:f8:f8:89 brd ff:ff:ff:ff:ff:ff link-netns cni-94b5426c-82c0-8f08-df26-63982baf66c0
+=== TC FILTERS ===
+--- lo ---
+--- enp0s3 ---
