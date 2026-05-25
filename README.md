@@ -7,16 +7,44 @@ Cilium 기반 Kubernetes 클러스터에서 eBPF + TC `prio` qdisc 조합으로 
 
 ## 실험 결과 요약 (이 repo에서 측정됨)
 
+### Latency (낮을수록 좋음)
 | CPU 부하 | metric | Baseline (Cilium) | Proposed (Cilium + eBPF + prio) | 개선 |
 |---------|--------|------------------|--------------------------------|------|
-| 10% | p99 latency | 13.02 ms | 3.42 ms | **−73.7%** |
-| 10% | max latency | 3866.6 ms | 1737.0 ms | **−55.1%** |
-| 10% | p99 jitter | 12928 μs | 3265 μs | **−74.7%** |
+| 10% | p99 | 13.02 ms | **3.42 ms** | **−73.7%** |
+| 10% | max | 3866.6 ms | **1737.0 ms** | **−55.1%** |
+| 30% | p99 | 8.21 ms | **5.94 ms** | **−27.6%** |
+| 30% | max | 738.1 ms | **190.6 ms** | **−74.2%** |
+| 50% | p99 | 12.08 ms | **7.04 ms** | **−41.7%** |
+| 70% | p99 | 11.78 ms | 11.64 ms | −1.1% |
 
-> 측정값은 master/worker VM 간 시계 오차를 1st percentile 기준으로 정규화한 후 산출.
-> 절대 latency는 VM virtio 오버헤드 + 소프트웨어 PTP 한계로 논문보다 큼.
+### Jitter (낮을수록 일정함)
+| CPU 부하 | Baseline p99 | Proposed p99 | 개선 |
+|---------|--------------|--------------|------|
+| 10% | 12928 μs | **3266 μs** | **−74.7%** |
+| 30% | 8307 μs | **5836 μs** | −29.7% |
+| 50% | 11758 μs | **6717 μs** | −42.9% |
+| 70% | 11956 μs | 9393 μs | −21.4% |
+
+> - master/worker VM 간 시계 오차는 1st percentile 기준 정규화로 보정.
+> - 절대 latency는 VM virtio 오버헤드 + 소프트웨어 PTP 한계로 논문보다 큼.
+> - **상대 개선**: 저~중간 CPU 부하(10~50%)에서 일관되게 개선이 큼.
+>   고부하(70%+)에서는 VM scheduling noise가 dominate하여 효과 감소.
 
 자세한 그래프: `step8-measurement/figures/fig{2..6}_*.png`
+
+### 측정 지표 용어
+- **p50** (50th percentile, median): 전체 패킷을 latency 오름차순 정렬했을 때 **정 가운데** 값. 절반의 패킷이 이보다 빠르게 도착.
+- **p99** (99th percentile): **상위 1% 직전**의 값. "보통은 이 정도가 worst-case" — TSN/실시간 시스템에서 가장 중요한 지표.
+- **max**: 가장 느렸던 단 한 개 패킷의 latency. outlier 영향이 크지만 worst-case를 보여줌.
+- **jitter** (μs): 연속한 두 패킷의 도착 간격이 예상치(1ms)에서 얼마나 벗어났는가. 작을수록 도착이 일정함.
+- **CPU 부하 N%**: 백그라운드 `stress-ng` 데몬셋이 만드는 CPU 점유율. **p50/p99과는 무관한 별개 축**.
+
+### 그래프 읽는 법
+- **Figure 3 (Latency)**: X축 CPU 부하, Y축 latency (ms, log scale). 그룹당 6개 막대: Baseline {p50, p99, max} + Proposed {p50, p99, max}. 색은 mode, 빗금은 percentile.
+- **Figure 5 (Jitter)**: Figure 3과 동일 구조의 jitter 버전.
+- **Figure 6 (CDF)**: 누적 분포. 곡선이 **좌상**에 가까울수록 빠르고 일관됨.
+- **Figure 4 (Jitter at low/high CPU)**: 가장 낮은/높은 CPU 부하만 따로 보는 비교.
+- **Figure 2 (Throughput)**: 1ms 간격 송신이므로 두 모드 모두 비슷한 ~125 KB/s (의도된 결과).
 
 ---
 
