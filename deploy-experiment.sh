@@ -92,16 +92,27 @@ setup_ebpf() {
         log_info "[Sender] egress attach 완료"
 
         # veth 인터페이스에 veth_filter attach
+        # Cilium은 lxc*, cilium_*, veth* 등 다양한 이름 사용
         log_info "[Sender] veth_filter attach..."
+        log_info "  모든 veth 인터페이스 목록:"
+        ip link show type veth | awk -F': ' '/^[0-9]/{print "    " $2}'
         local veth_count=0
-        for veth in $(ip link show type veth | awk -F': ' '/^[0-9]/{print $2}' | cut -d'@' -f1 | grep -E '^lxc|^veth'); do
+        for veth in $(ip link show type veth | awk -F': ' '/^[0-9]/{print $2}' | cut -d'@' -f1); do
             tc qdisc add dev "$veth" clsact 2>/dev/null || true
-            tc filter add dev "$veth" ingress bpf da obj build/veth_filter.bpf.o sec tc 2>/dev/null && {
-                log_info "  veth_filter → $veth"
+            if tc filter add dev "$veth" ingress bpf da obj build/veth_filter.bpf.o sec tc 2>/dev/null; then
+                log_info "  veth_filter → $veth (성공)"
                 veth_count=$((veth_count + 1))
-            }
+            else
+                log_warn "  veth_filter → $veth (실패)"
+            fi
         done
-        log_info "veth_filter: ${veth_count}개 인터페이스에 attach됨"
+        if [ "$veth_count" -eq 0 ]; then
+            log_warn "veth_filter: attach된 인터페이스 없음!"
+            log_warn "  Cilium pod veth 인터페이스가 없거나 이름 패턴이 다를 수 있습니다"
+            log_warn "  수동 확인: ip link show type veth"
+        else
+            log_info "veth_filter: ${veth_count}개 인터페이스에 attach됨"
+        fi
     fi
 
     if [ "$ROLE" = "receiver" ]; then
@@ -137,37 +148,68 @@ setup_ebpf() {
 # TC Qdisc 설정 (Proposed 실험용)
 # =============================================================================
 setup_tc_qdisc() {
-    log_info "=== TC Qdisc 설정 (mqprio + etf) ==="
+    log_info "=== TC Qdisc 설정 (우선순위 큐) ==="
 
     # 기존 root qdisc 제거
     tc qdisc del dev "$PHYS_IF" root 2>/dev/null || true
 
-    # mqprio: 3개 TC class (hw 0 = 소프트웨어 모드, VM용)
-    log_info "mqprio 설정..."
-    tc qdisc add dev "$PHYS_IF" root handle 100: mqprio \
-        num_tc 3 \
-        map 2 2 1 0 2 2 2 2 2 2 2 2 2 2 2 2 \
-        queues 1@0 1@0 1@0 \
-        hw 0
+    # TX queue 수 확인
+    local txq_count
+    txq_count=$(ls -d /sys/class/net/"$PHYS_IF"/queues/tx-* 2>/dev/null | wc -l)
+    log_info "NIC TX queue 수: $txq_count"
 
-    # ETF: tc0 (time-sensitive queue)에 txtime 스케줄링
-    log_info "ETF 설정 (tc0)..."
+    local qdisc_ok=0
+
+    # 시도 1: mqprio (다중 TX queue가 있을 때만)
+    if [ "$txq_count" -ge 3 ]; then
+        log_info "mqprio 설정 시도 (TX queue $txq_count개)..."
+        if tc qdisc add dev "$PHYS_IF" root handle 100: mqprio \
+            num_tc 3 \
+            map 2 2 1 0 2 2 2 2 2 2 2 2 2 2 2 2 \
+            queues 1@0 1@1 1@2 \
+            hw 0 2>/dev/null; then
+            log_info "mqprio 설정 완료"
+            qdisc_ok=1
+        else
+            log_warn "mqprio 설정 실패"
+        fi
+    else
+        log_info "TX queue 부족 ($txq_count < 3) — mqprio 건너뜀"
+    fi
+
+    # 시도 2: prio qdisc (VM 폴백 — 소프트웨어 우선순위 큐)
+    if [ "$qdisc_ok" -eq 0 ]; then
+        log_info "prio qdisc 설정 (VM 호환 모드)..."
+        if tc qdisc add dev "$PHYS_IF" root handle 100: prio \
+            bands 3 \
+            priomap 2 2 1 0 2 2 2 2 2 2 2 2 2 2 2 2 2>/dev/null; then
+            log_info "prio qdisc 설정 완료"
+            qdisc_ok=1
+        else
+            log_error "prio qdisc 설정도 실패"
+            log_info "디버그: tc qdisc show dev $PHYS_IF"
+            tc qdisc show dev "$PHYS_IF"
+            return 1
+        fi
+    fi
+
+    # ETF 설정 시도 (mqprio/prio의 band 0 = time-sensitive)
+    log_info "ETF 설정 시도 (band 0)..."
     if tc qdisc add dev "$PHYS_IF" parent 100:1 handle 10: etf \
         clockid CLOCK_TAI \
         delta 150000 \
         deadline_mode on 2>/dev/null; then
-        log_info "ETF 설정 완료"
+        log_info "ETF 설정 완료 (CLOCK_TAI)"
+    elif tc qdisc add dev "$PHYS_IF" parent 100:1 handle 10: etf \
+        clockid CLOCK_REALTIME \
+        delta 150000 \
+        deadline_mode on 2>/dev/null; then
+        log_info "ETF 설정 완료 (CLOCK_REALTIME)"
     else
-        log_warn "ETF 설정 실패 (CLOCK_TAI 미지원 가능성). CLOCK_REALTIME으로 재시도..."
-        if ! tc qdisc add dev "$PHYS_IF" parent 100:1 handle 10: etf \
-            clockid CLOCK_REALTIME \
-            delta 150000 \
-            deadline_mode on 2>/dev/null; then
-            log_warn "ETF 설정 불가 — mqprio만 사용합니다"
-        fi
+        log_warn "ETF 미지원 — 우선순위 큐만 사용 (txtime 스케줄링 없음)"
     fi
 
-    log_info "Qdisc 상태:"
+    log_info "최종 Qdisc 상태:"
     tc qdisc show dev "$PHYS_IF"
 }
 
@@ -243,8 +285,13 @@ run_experiment() {
     log_info "=== 실험 실행: $MODE (CPU 부하: ${CPU_LOAD}%) ==="
     mkdir -p "$RESULTS_DIR"
 
-    # Proposed 모드: TC qdisc 설정
+    # Proposed 모드: TC qdisc 설정 (root 권한 필요)
     if [ "$MODE" = "proposed" ]; then
+        if [ "$(id -u)" -ne 0 ]; then
+            log_error "proposed 모드는 TC qdisc 설정을 위해 sudo가 필요합니다"
+            log_info "사용법: sudo bash $0 run proposed $CPU_LOAD"
+            exit 1
+        fi
         setup_tc_qdisc
     else
         remove_tc_qdisc
@@ -310,7 +357,46 @@ run_experiment() {
 
     # eBPF 통계 출력
     log_info "=== eBPF 통계 ==="
-    bpftool map dump name pkt_stats 2>/dev/null || echo "(pkt_stats 없음)"
+    if command -v bpftool &>/dev/null; then
+        echo "--- pkt_stats ---"
+        bpftool map dump name pkt_stats 2>/dev/null | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    for m in data:
+        mid = m.get('id', '?')
+        elems = m.get('elements', [])
+        vals = {e['key']: e['value'] for e in elems}
+        print(f'  map_id={mid}: TOTAL={vals.get(0,0)} TSN={vals.get(1,0)} BEST_EFF={vals.get(2,0)} DROP={vals.get(3,0)}')
+except: print('  (파싱 실패)')
+" 2>/dev/null || echo "  (pkt_stats 없음 — sudo로 실행하세요)"
+        echo "--- debug_stats (0이 아닌 값만) ---"
+        bpftool map dump name debug_stats 2>/dev/null | python3 -c "
+import sys, json
+labels = {0:'ETH_SHORT',4:'NOT_IP',5:'NOT_UDP',8:'TSN_PORT',9:'TSN_PCP',13:'PROG_ENTER'}
+try:
+    data = json.load(sys.stdin)
+    for m in data:
+        mid = m.get('id', '?')
+        nonzero = [(e['key'], e['value']) for e in m.get('elements', []) if e['value'] > 0]
+        if nonzero:
+            parts = [f'{labels.get(k,str(k))}={v}' for k, v in nonzero]
+            print(f'  map_id={mid}: {\"  \".join(parts)}')
+except: pass
+" 2>/dev/null
+    else
+        echo "(bpftool 없음)"
+    fi
+
+    # 결과 CSV 미리보기
+    if [ -f "$RESULT_FILE" ]; then
+        local line_count
+        line_count=$(wc -l < "$RESULT_FILE")
+        log_info "결과 파일: $RESULT_FILE ($line_count 행)"
+        head -3 "$RESULT_FILE"
+        echo "..."
+        tail -1 "$RESULT_FILE"
+    fi
 
     log_info "=== 실험 완료: $RESULT_FILE ==="
 }
@@ -340,11 +426,36 @@ status() {
     kubectl get nodes -o wide 2>/dev/null || echo "(kubectl 사용 불가 — worker 노드인 경우 정상)"
 
     echo ""
+    echo "=== NIC 정보: $PHYS_IF ==="
+    echo "--- TX queues ---"
+    ls -d /sys/class/net/"$PHYS_IF"/queues/tx-* 2>/dev/null | wc -l | xargs -I{} echo "TX queue 수: {}"
+    echo "--- driver ---"
+    ethtool -i "$PHYS_IF" 2>/dev/null | head -3 || echo "(ethtool 없음)"
+
+    echo ""
     echo "=== TC Filters ($PHYS_IF) ==="
     echo "--- egress ---"
     tc filter show dev "$PHYS_IF" egress 2>/dev/null || echo "(없음)"
     echo "--- ingress ---"
     tc filter show dev "$PHYS_IF" ingress 2>/dev/null || echo "(없음)"
+
+    echo ""
+    echo "=== veth 인터페이스 (veth_filter attach 대상) ==="
+    local veth_list
+    veth_list=$(ip link show type veth 2>/dev/null | awk -F': ' '/^[0-9]/{print $2}' | cut -d'@' -f1)
+    if [ -n "$veth_list" ]; then
+        for v in $veth_list; do
+            local has_bpf=""
+            if tc filter show dev "$v" ingress 2>/dev/null | grep -q bpf; then
+                has_bpf="[BPF attached]"
+            else
+                has_bpf="[NO BPF]"
+            fi
+            echo "  $v $has_bpf"
+        done
+    else
+        echo "  (veth 인터페이스 없음 — Cilium 또는 CNI가 아직 veth를 생성하지 않음)"
+    fi
 
     echo ""
     echo "=== TC Qdisc ==="
@@ -355,16 +466,71 @@ status() {
     ip link show dev "$PHYS_IF" | grep -i xdp || echo "(없음)"
 
     echo ""
-    echo "=== BPF Programs ==="
-    bpftool prog list 2>/dev/null | head -20 || echo "(bpftool 없음)"
+    echo "=== BPF Programs (TC/XDP만) ==="
+    bpftool prog list 2>/dev/null | grep -A2 -E 'sched_cls|xdp' || echo "(TC/XDP 프로그램 없음)"
 
     echo ""
-    echo "=== BPF Maps ==="
-    bpftool map list 2>/dev/null | head -20 || echo "(bpftool 없음)"
+    echo "=== Packet Stats (pkt_stats) ==="
+    echo "  [0] TOTAL   [1] TSN   [2] BEST_EFF   [3] DROPPED"
+    bpftool map dump name pkt_stats 2>/dev/null | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    for m in data:
+        mid = m.get('id', '?')
+        elems = m.get('elements', [])
+        vals = {e['key']: e['value'] for e in elems}
+        total = vals.get(0, 0)
+        tsn = vals.get(1, 0)
+        best = vals.get(2, 0)
+        drop = vals.get(3, 0)
+        if total > 0 or tsn > 0:
+            print(f'  map_id={mid}: TOTAL={total} TSN={tsn} BEST_EFF={best} DROPPED={drop}')
+        else:
+            print(f'  map_id={mid}: (모두 0 — 패킷이 이 프로그램을 통과하지 않음)')
+except:
+    print('  (파싱 실패 — raw dump:)')
+    sys.stdin.seek(0)
+    print(sys.stdin.read()[:500])
+" 2>/dev/null || echo "  (pkt_stats 없음)"
 
     echo ""
-    echo "=== Packet Stats ==="
-    bpftool map dump name pkt_stats 2>/dev/null || echo "(pkt_stats 없음)"
+    echo "=== Debug Stats (debug_stats) ==="
+    echo "  [0]ETH_SHORT [4]NOT_IP [5]NOT_UDP [8]TSN_PORT [9]TSN_PCP [13]PROG_ENTER"
+    bpftool map dump name debug_stats 2>/dev/null | python3 -c "
+import sys, json
+labels = {0:'ETH_SHORT',1:'VLAN_FAIL',2:'IP_SHORT',3:'UDP_SHORT',
+          4:'NOT_IP',5:'NOT_UDP',6:'VLAN_TAG',7:'AVTP',
+          8:'TSN_PORT',9:'TSN_PCP',10:'RINGBUF_FAIL',11:'MAP_FAIL',
+          12:'UNK_PROTO',13:'PROG_ENTER',14:'IHL_BAD'}
+try:
+    data = json.load(sys.stdin)
+    for m in data:
+        mid = m.get('id', '?')
+        elems = m.get('elements', [])
+        nonzero = [(e['key'], e['value']) for e in elems if e['value'] > 0]
+        if nonzero:
+            parts = [f'{labels.get(k,str(k))}={v}' for k, v in nonzero]
+            print(f'  map_id={mid}: {\"  \".join(parts)}')
+        else:
+            print(f'  map_id={mid}: (모두 0)')
+except:
+    print('  (파싱 실패)')
+" 2>/dev/null || echo "  (debug_stats 없음)"
+
+    echo ""
+    echo "=== Cilium 네트워크 모드 ==="
+    kubectl -n kube-system get configmap cilium-config -o jsonpath='{.data.tunnel}' 2>/dev/null && echo "" || \
+    kubectl -n kube-system exec -l k8s-app=cilium -- cilium status 2>/dev/null | grep -i 'tunnel\|encap\|routing' || \
+    echo "  (확인 불가)"
+
+    echo ""
+    echo "=== K8s 실험 Pod 상태 ==="
+    kubectl -n tsn-experiment get pods -o wide 2>/dev/null || echo "(tsn-experiment namespace 없음)"
+
+    echo ""
+    echo "=== trace_pipe 최근 로그 (5줄) ==="
+    timeout 1 cat /sys/kernel/debug/tracing/trace_pipe 2>/dev/null | head -5 || echo "(trace_pipe 접근 불가 — sudo 필요)"
 }
 
 # =============================================================================
