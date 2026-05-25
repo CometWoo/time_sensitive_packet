@@ -88,10 +88,14 @@ def percentile(values, p):
 
 
 def figure2_throughput():
-    """Figure 2: Throughput under low/high CPU utilization"""
-    avail = get_partial_cpu_loads()
+    """Figure 2: Throughput under low/high CPU utilization
+    양쪽(baseline+proposed) 모두 있는 CPU 부하에서 low/high 선택"""
+    avail = get_available_cpu_loads()
     if not avail:
-        return
+        # fallback: 한쪽만이라도
+        avail = get_partial_cpu_loads()
+        if not avail:
+            return
     targets = sorted(set([avail[0], avail[-1]]))
     fig, axes = plt.subplots(1, len(targets), figsize=(6 * len(targets), 5))
     if len(targets) == 1:
@@ -212,9 +216,12 @@ def figure3_latency():
 
 
 def figure4_jitter_subset():
-    avail = get_partial_cpu_loads()
+    # baseline+proposed 둘 다 있는 CPU 우선 사용
+    avail = get_available_cpu_loads()
     if not avail:
-        return
+        avail = get_partial_cpu_loads()
+        if not avail:
+            return
     targets = sorted(set([avail[0], avail[-1]]))
     fig, axes = plt.subplots(1, len(targets), figsize=(7 * len(targets), 5))
     if len(targets) == 1:
@@ -274,9 +281,12 @@ def figure5_jitter_all():
 
 
 def figure6_cdf():
-    avail = get_partial_cpu_loads()
+    # baseline+proposed 둘 다 있는 CPU 우선 사용
+    avail = get_available_cpu_loads()
     if not avail:
-        return
+        avail = get_partial_cpu_loads()
+        if not avail:
+            return
     targets = sorted(set([avail[0], avail[-1]]))
     fig, axes = plt.subplots(1, len(targets), figsize=(7 * len(targets), 5))
     if len(targets) == 1:
