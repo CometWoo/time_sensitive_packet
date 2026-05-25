@@ -255,6 +255,17 @@ run_experiment() {
     kubectl -n tsn-experiment delete daemonset cpu-stress --ignore-not-found=true 2>/dev/null || true
     sleep 3
 
+    # Listener pod 재시작 (이전 실행 후 프로세스 종료 → CrashLoopBackOff 방지)
+    log_info "Listener pod 재시작 (깨끗한 상태 보장)..."
+    kubectl -n tsn-experiment delete pod -l app=listener --grace-period=5 2>/dev/null || true
+    kubectl -n tsn-experiment wait --for=condition=ready pod -l app=listener --timeout=120s || {
+        log_error "Listener pod 재시작 실패"
+        kubectl -n tsn-experiment get pods -l app=listener -o wide
+        exit 1
+    }
+    LISTENER_POD=$(kubectl -n tsn-experiment get pod -l app=listener -o jsonpath='{.items[0].metadata.name}')
+    log_info "Listener pod 준비 완료: $LISTENER_POD"
+
     # CPU 부하 생성
     log_info "CPU 부하 생성 (${CPU_LOAD}%)..."
     sed "s/\"99\"/\"$CPU_LOAD\"/" "$K8S_DIR/stress-daemonset.yaml" | \
@@ -271,16 +282,31 @@ run_experiment() {
         log_warn "Talker Job 타임아웃"
     }
 
+    # Listener가 결과 파일을 쓸 때까지 대기 (timeout 후 CSV 작성)
+    log_info "Listener 결과 파일 대기 (최대 90초)..."
+    local csv_found=0
+    for i in $(seq 1 18); do
+        if kubectl -n tsn-experiment exec "$LISTENER_POD" -- test -f /data/results.csv 2>/dev/null; then
+            log_info "결과 파일 확인됨 (${i}회 폴링)"
+            csv_found=1
+            break
+        fi
+        sleep 5
+    done
+    if [ "$csv_found" -eq 0 ]; then
+        log_warn "결과 파일 대기 타임아웃 — Listener 로그 확인:"
+        kubectl -n tsn-experiment logs "$LISTENER_POD" --tail=20
+    fi
+
     # 결과 수집
     local RESULT_FILE="$RESULTS_DIR/${MODE}_cpu${CPU_LOAD}.csv"
     log_info "결과 수집 → $RESULT_FILE"
-    LISTENER_POD=$(kubectl -n tsn-experiment get pod -l app=listener -o jsonpath='{.items[0].metadata.name}')
     kubectl -n tsn-experiment cp "$LISTENER_POD:/data/results.csv" "$RESULT_FILE" || {
         log_warn "결과 파일 복사 실패"
     }
 
     # 부하 제거
-    kubectl -n tsn-experiment delete daemonset stress-ng 2>/dev/null || true
+    kubectl -n tsn-experiment delete daemonset cpu-stress --ignore-not-found=true 2>/dev/null || true
 
     # eBPF 통계 출력
     log_info "=== eBPF 통계 ==="
