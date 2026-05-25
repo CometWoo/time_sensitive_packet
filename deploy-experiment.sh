@@ -52,27 +52,29 @@ setup_ebpf() {
     local ROLE="${1:-sender}"  # sender 또는 receiver
     log_info "=== eBPF 설정 시작 (역할: $ROLE, NIC: $PHYS_IF) ==="
 
-    # 빌드 환경 확인
-    log_info "빌드 환경 확인..."
-    for cmd in clang llvm-objdump bpftool; do
-        if ! command -v $cmd &>/dev/null; then
-            log_error "$cmd 이 설치되어 있지 않습니다"
-            log_info "설치: sudo apt install clang llvm libbpf-dev linux-headers-\$(uname -r) linux-tools-common linux-tools-\$(uname -r)"
-            exit 1
-        fi
-    done
-
-    # 커널 헤더 확인
-    if [ ! -d "/usr/src/linux-headers-$(uname -r)" ] && [ ! -d "/lib/modules/$(uname -r)/build" ]; then
-        log_warn "커널 헤더가 없습니다. stub 헤더로 빌드합니다."
-    fi
-
-    # eBPF 컴파일
-    log_info "eBPF 프로그램 컴파일..."
+    # 사전 빌드된 .bpf.o 파일 확인
     cd "$EBPF_DIR"
-    make clean 2>/dev/null || true
-    make DEBUG=2
-    log_info "컴파일 완료: $(ls build/*.bpf.o 2>/dev/null | tr '\n' ' ')"
+    if ls build/*.bpf.o &>/dev/null; then
+        log_info "사전 빌드된 eBPF 오브젝트 발견 — 컴파일 생략"
+        ls build/*.bpf.o
+    else
+        # 빌드 환경 확인
+        log_info "빌드된 오브젝트 없음 — 컴파일 시도..."
+        for cmd in clang make; do
+            if ! command -v $cmd &>/dev/null; then
+                log_error "$cmd 이 설치되어 있지 않습니다"
+                log_info "해결 방법 (택 1):"
+                log_info "  A) 이 노드에 빌드 도구 설치: sudo apt install clang llvm make libbpf-dev linux-headers-\$(uname -r)"
+                log_info "  B) 빌드 가능한 노드에서 컴파일 후 step6-ebpf/build/ 디렉토리를 이 노드로 복사"
+                exit 1
+            fi
+        done
+
+        log_info "eBPF 프로그램 컴파일..."
+        make clean 2>/dev/null || true
+        make DEBUG=2
+        log_info "컴파일 완료: $(ls build/*.bpf.o 2>/dev/null | tr '\n' ' ')"
+    fi
 
     # 기존 필터 제거
     log_info "기존 TC 필터/qdisc 제거..."
@@ -181,10 +183,24 @@ remove_tc_qdisc() {
 deploy_k8s() {
     log_info "=== K8s 실험 배포 ==="
 
-    # 기존 리소스 정리
+    # 기존 리소스 정리 (개별 삭제 후 namespace 삭제 — Terminating 방지)
     log_info "기존 리소스 정리..."
-    kubectl delete namespace tsn-experiment --ignore-not-found=true 2>/dev/null || true
-    sleep 5
+    if kubectl get namespace tsn-experiment &>/dev/null; then
+        kubectl -n tsn-experiment delete job --all --force --grace-period=0 2>/dev/null || true
+        kubectl -n tsn-experiment delete daemonset --all --force --grace-period=0 2>/dev/null || true
+        kubectl -n tsn-experiment delete deployment --all --force --grace-period=0 2>/dev/null || true
+        kubectl -n tsn-experiment delete pod --all --force --grace-period=0 2>/dev/null || true
+        kubectl -n tsn-experiment delete configmap --all 2>/dev/null || true
+        kubectl -n tsn-experiment delete svc --all 2>/dev/null || true
+        kubectl delete namespace tsn-experiment --timeout=30s 2>/dev/null || {
+            log_warn "namespace 삭제 타임아웃 — 강제 진행합니다"
+            # Finalizer 제거하여 강제 삭제
+            kubectl get namespace tsn-experiment -o json | \
+                sed 's/"finalizers": \[[^]]*\]/"finalizers": []/' | \
+                kubectl replace --raw "/api/v1/namespaces/tsn-experiment/finalize" -f - 2>/dev/null || true
+        }
+        sleep 3
+    fi
 
     # 네임스페이스 생성
     kubectl apply -f "$K8S_DIR/namespace.yaml"
@@ -329,6 +345,22 @@ status() {
 # Main
 # =============================================================================
 case "${1:-help}" in
+    build-ebpf)
+        log_info "=== eBPF 프로그램 컴파일 ==="
+        cd "$EBPF_DIR"
+        for cmd in clang make; do
+            if ! command -v $cmd &>/dev/null; then
+                log_error "$cmd 이 설치되어 있지 않습니다"
+                log_info "설치: sudo apt install clang llvm make libbpf-dev linux-headers-\$(uname -r)"
+                exit 1
+            fi
+        done
+        make clean 2>/dev/null || true
+        make DEBUG=2
+        log_info "컴파일 완료. 다른 노드로 배포하려면:"
+        log_info "  git add step6-ebpf/build/ && git commit && git push"
+        log_info "  (다른 노드에서) git pull"
+        ;;
     setup-ebpf)
         setup_ebpf "${2:-sender}"
         ;;
@@ -354,7 +386,8 @@ case "${1:-help}" in
         echo "사용법: $0 <command> [args]"
         echo ""
         echo "Commands:"
-        echo "  setup-ebpf <sender|receiver>  - eBPF 컴파일 + attach"
+        echo "  build-ebpf                    - eBPF 컴파일만 (빌드 가능한 노드에서)"
+        echo "  setup-ebpf <sender|receiver>  - eBPF attach (사전 빌드된 .o 사용 가능)"
         echo "  setup-tc                      - TC qdisc 설정 (mqprio+etf)"
         echo "  remove-tc                     - TC qdisc 제거"
         echo "  deploy-k8s                    - K8s 실험 환경 배포"
@@ -363,6 +396,9 @@ case "${1:-help}" in
         echo "  status                        - 현재 상태 확인"
         echo ""
         echo "실행 순서:"
+        echo "  0. [master]   bash $0 build-ebpf    # 한 번만, make가 있는 노드에서"
+        echo "     [master]   git add step6-ebpf/build/ && git commit -m 'add pre-built ebpf' && git push"
+        echo "     [worker01] git pull               # 빌드 결과 배포"
         echo "  1. [master]   sudo bash $0 setup-ebpf sender"
         echo "  2. [worker01] sudo bash $0 setup-ebpf receiver"
         echo "  3. [master]   bash $0 deploy-k8s"
