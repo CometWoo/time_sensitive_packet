@@ -21,20 +21,17 @@ echo " veth: ${VETH_IF:-자동 감지}"
 echo "=========================================="
 
 # 빌드 확인
-for prog in veth_filter egress ingress xdp_vlan_avtp; do
+for prog in veth_filter egress ingress; do
     if [ ! -f "$BUILDDIR/${prog}.bpf.o" ]; then
         echo "빌드 필요: make -C $(dirname "$0")"
         exit 1
     fi
 done
 
-# 0. XDP 프로그램 → 물리 NIC (논문: "adding VLAN/AVTP support in XDP")
-echo "[0/4] XDP 프로그램 attach → $PHYS_IF ..."
-# ⚠️ VM: xdpgeneric만 가능 (virtio-net은 native XDP 미지원)
-#    물리서버: xdpdrv 사용 → ip link set dev $PHYS_IF xdp obj ...
+# (구) XDP VLAN/AVTP 프로그램 attach 단계 제거됨 (2026-06).
+# 실험 트래픽이 plain UDP라 XDP의 VLAN/AVTP 분류가 한 번도 호출되지 않아 dead code였음.
+# 혹시 남아 있던 XDP 프로그램이 있으면 정리만 수행:
 sudo ip link set dev "$PHYS_IF" xdpgeneric off 2>/dev/null || true
-sudo ip link set dev "$PHYS_IF" xdpgeneric obj "$BUILDDIR/xdp_vlan_avtp.bpf.o" sec xdp
-echo "  완료 (xdpgeneric 모드)"
 
 # 1. 물리 NIC에 clsact qdisc 추가 (이미 있으면 무시)
 echo "[1/4] clsact qdisc 추가..."

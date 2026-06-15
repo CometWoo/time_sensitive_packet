@@ -1,90 +1,85 @@
-# Makefile — eBPF 프로그램 빌드 (kernel 5.15, clang + libbpf)
+# Makefile — eBPF 프로그램 빌드 (clang + 실제 커널/libbpf 헤더)
+#
+# 의존성: clang make libbpf-dev linux-libc-dev
 #
 # 사용법:
-#   make                    — 릴리스 빌드 (DEBUG_LEVEL=2)
-#   make DEBUG=4            — 전체 디버그 빌드 (모든 패킷 로그)
-#   make DEBUG=0            — 디버그 off (프로덕션)
+#   make                    — 빌드
 #   make check-env          — 빌드 환경 검증
 #   make clean              — 정리
 #
-# 디버그 로그 확인:
+# 디버그(런타임 토글, debug_level map):
+#   sudo bpftool map update name debug_level key 0 0 0 0 value 3 0 0 0
 #   sudo cat /sys/kernel/debug/tracing/trace_pipe
 # 통계 확인:
 #   sudo bpftool map dump name pkt_stats
-#   sudo bpftool map dump name debug_stats
 
 CLANG    ?= clang
 LLC      ?= llc
 BPFTOOL  ?= bpftool
 ARCH     := $(shell uname -m 2>/dev/null | sed 's/x86_64/x86/' | sed 's/aarch64/arm64/' || echo "x86")
 
-# 디버그 레벨 (기본 2 = 오류+경고)
-DEBUG    ?= 2
-
-# 커널 헤더 경로
-KERNEL_HEADERS ?= /usr/src/linux-headers-$(shell uname -r 2>/dev/null || echo "5.15.0-generic")
-LIBBPF_HEADERS ?= /usr/include/bpf
+# 멀티아치 UAPI 헤더 경로 (asm/ 심볼릭 링크용)
+#   linux-libc-dev 가 /usr/include/<arch>-linux-gnu/asm 에 설치함
+MULTIARCH ?= $(shell uname -m)-linux-gnu
 
 # 추가 컴파일 플래그 (사용자 지정)
 EXTRA_CFLAGS ?=
 
-# 컴파일 플래그
-# stub-headers를 최우선으로 사용 — 커널 내부 헤더 의존성 제거
-# 커널 6.x 내부 헤더는 BPF target과 호환되지 않음 (__cold, unlikely 등)
+# 컴파일 플래그 (2026-06 감사: stub-headers 제거 → 실제 커널/libbpf 헤더 사용)
+#   linux/* : linux-libc-dev (/usr/include/linux, /usr/include/<arch>-linux-gnu)
+#   bpf/*   : libbpf-dev      (/usr/include/bpf)
+#   DEBUG_LEVEL 매크로 제거 — 디버그는 런타임 debug_level BPF map 으로 일원화.
 BPF_CFLAGS := -g -O2 \
     -target bpf \
     -D__TARGET_ARCH_$(ARCH) \
     -D__LITTLE_ENDIAN_BITFIELD \
-    -DDEBUG_LEVEL=$(DEBUG) \
-    -Istub-headers \
+    -I/usr/include \
+    -I/usr/include/$(MULTIARCH) \
     -Isrc \
     -Wall -Wno-unused-value \
     $(EXTRA_CFLAGS)
 
 SRCDIR   := src
 BUILDDIR := build
-PROGS    := veth_filter egress ingress xdp_vlan_avtp
+# xdp_vlan_avtp 제거됨 (2026-06): 실험 트래픽이 plain UDP라 XDP의 VLAN/AVTP 분류가
+# 한 번도 호출되지 않음 → dead code. 자세한 근거는 README "코드 감사" 절 참조.
+PROGS    := veth_filter egress ingress
 
 OBJS     := $(addprefix $(BUILDDIR)/, $(addsuffix .bpf.o, $(PROGS)))
 
 .DEFAULT_GOAL := all
 
-.PHONY: all clean install verify check-env debug-build help
+.PHONY: all clean install verify check-env help
 
 help:
-	@echo "eBPF 빌드 시스템"
+	@echo "eBPF 빌드 시스템 (실제 커널/libbpf 헤더 사용)"
 	@echo ""
-	@echo "  make                  릴리스 빌드 (DEBUG_LEVEL=2)"
-	@echo "  make DEBUG=4          전체 디버그 빌드"
-	@echo "  make DEBUG=0          디버그 off 빌드"
+	@echo "  make                  빌드"
 	@echo "  make check-env        빌드 환경 검증"
 	@echo "  make verify           빌드된 오브젝트 검증"
 	@echo "  make clean            정리"
 	@echo ""
-	@echo "디버그 레벨:"
-	@echo "  0 = off, 1 = ERR, 2 = +WARN, 3 = +INFO, 4 = +TRACE"
+	@echo "디버그는 런타임 debug_level BPF map 으로 제어:"
+	@echo "  sudo bpftool map update name debug_level key 0 0 0 0 value 3 0 0 0"
+	@echo "  레벨: 0=off 1=ERR 2=+WARN 3=+INFO 4=+TRACE"
+	@echo "  로그: sudo cat /sys/kernel/debug/tracing/trace_pipe"
 
 all: check-env-quiet $(BUILDDIR) $(OBJS)
 	@echo ""
-	@echo "빌드 완료 (DEBUG_LEVEL=$(DEBUG)):"
+	@echo "빌드 완료:"
 	@ls -la $(BUILDDIR)/*.bpf.o
-
-# 전체 디버그 빌드 편의 타겟
-debug-build:
-	$(MAKE) all DEBUG=4
 
 $(BUILDDIR):
 	mkdir -p $(BUILDDIR)
 
 $(BUILDDIR)/%.bpf.o: $(SRCDIR)/%.c $(SRCDIR)/common.h
-	@echo "[BPF] $< → $@ (DEBUG=$(DEBUG))"
+	@echo "[BPF] $< → $@"
 	$(CLANG) $(BPF_CFLAGS) -c $< -o $@
 
 # 개별 빌드 타겟
 veth_filter:    $(BUILDDIR) $(BUILDDIR)/veth_filter.bpf.o
 egress:         $(BUILDDIR) $(BUILDDIR)/egress.bpf.o
 ingress:        $(BUILDDIR) $(BUILDDIR)/ingress.bpf.o
-xdp_vlan_avtp:  $(BUILDDIR) $(BUILDDIR)/xdp_vlan_avtp.bpf.o
 
 # ──────────────────────────────────────────────
 # 빌드 환경 검증 (상세)
@@ -113,18 +108,22 @@ check-env:
 	    echo "  설치: sudo apt-get install clang llvm"; \
 	fi
 	@echo ""
-	@# stub 헤더 확인
-	@echo "── stub-headers (BPF 전용 헤더) ──"
-	@if [ -f "stub-headers/linux/bpf.h" ]; then \
-	    echo "  [OK] stub-headers/linux/bpf.h 발견"; \
+	@# 실제 커널/libbpf 헤더 확인
+	@echo "── 커널/libbpf 헤더 ──"
+	@if [ -f "/usr/include/bpf/bpf_helpers.h" ]; then \
+	    echo "  [OK] /usr/include/bpf/bpf_helpers.h 발견 (libbpf-dev)"; \
 	else \
-	    echo "  [FAIL] stub-headers/linux/bpf.h 없음"; \
-	    echo "  git pull 로 stub-headers 디렉토리를 받으세요"; \
+	    echo "  [FAIL] /usr/include/bpf/bpf_helpers.h 없음 — sudo apt install libbpf-dev"; \
 	fi
-	@if [ -f "stub-headers/bpf/bpf_helpers.h" ]; then \
-	    echo "  [OK] stub-headers/bpf/bpf_helpers.h 발견"; \
+	@if [ -f "/usr/include/linux/bpf.h" ]; then \
+	    echo "  [OK] /usr/include/linux/bpf.h 발견 (linux-libc-dev)"; \
 	else \
-	    echo "  [FAIL] stub-headers/bpf/bpf_helpers.h 없음"; \
+	    echo "  [FAIL] /usr/include/linux/bpf.h 없음 — sudo apt install linux-libc-dev"; \
+	fi
+	@if [ -d "/usr/include/$(MULTIARCH)/asm" ]; then \
+	    echo "  [OK] /usr/include/$(MULTIARCH)/asm 발견"; \
+	else \
+	    echo "  [WARN] /usr/include/$(MULTIARCH)/asm 없음 — gcc-multilib 또는 linux-libc-dev 확인"; \
 	fi
 	@echo ""
 	@# bpftool
@@ -154,8 +153,12 @@ check-env-quiet:
 	    echo "[ERROR] clang 미설치. 'make check-env'로 상세 확인"; \
 	    exit 1; \
 	fi
-	@if [ ! -f "stub-headers/linux/bpf.h" ]; then \
-	    echo "[ERROR] stub-headers 없음. step6-ebpf/ 디렉토리에서 실행하세요"; \
+	@if [ ! -f "/usr/include/bpf/bpf_helpers.h" ]; then \
+	    echo "[ERROR] libbpf 헤더 없음. sudo apt install libbpf-dev"; \
+	    exit 1; \
+	fi
+	@if [ ! -f "/usr/include/linux/bpf.h" ]; then \
+	    echo "[ERROR] 커널 UAPI 헤더 없음. sudo apt install linux-libc-dev"; \
 	    exit 1; \
 	fi
 

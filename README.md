@@ -162,13 +162,19 @@ Cilium 기반 Kubernetes 클러스터에서 eBPF + TC `prio` qdisc 조합으로 
 sudo bpftool map dump name pkt_stats  →  모든 카운터 0
 ```
 
-**우리 eBPF는 attach되어 있지만 호출되지 않습니다.** Cilium이 `routing-mode: native`일 때:
-1. Pod 송신 패킷이 lxc<hash> veth로 진입
-2. **tcx/ingress (cil_from_container)** 가 먼저 실행됨 — Cilium 자체 BPF
-3. Cilium이 `bpf_redirect()` 로 enp0s3에 직접 전달 → **clsact (우리 BPF)는 호출 안됨**
-4. enp0s3 송신 시 qdisc는 거치지만 우리 clsact egress BPF도 우회됨
+**우리 eBPF는 attach되어 있지만 호출되지 않습니다.** 정확한 원인은 **tcx 와 legacy clsact 의 커널 실행 순서**입니다 (kernel ≥ 6.6):
 
-결과: **eBPF 통계는 0이지만 실험은 정상**. 이유는 talker가 `SO_PRIORITY=3`을 socket에 직접 설정하기 때문에 `skb->priority`가 자동 전파되고, prio qdisc가 그걸 보고 band 0으로 분류합니다. 우리 eBPF의 역할은 보강(SO_PRIORITY 없는 외부 패킷도 분류)이지 필수는 아닙니다.
+1. Pod 송신 패킷이 lxc<hash> veth ingress 로 진입.
+2. 커널 `sch_handle_ingress()` 는 **tcx 프로그램을 먼저 실행**하고(`tcx_run`), 그것이 `TC_ACT_UNSPEC` 를 반환할 때만 **legacy clsact(`tc_run`) 를 실행**한다 (net/core/dev.c).
+3. Cilium 의 **tcx/ingress `cil_from_container`** 가 먼저 실행되어 정책 검사 후 `bpf_redirect()` 로 enp0s3 에 보내고 `TC_ACT_REDIRECT`(=UNSPEC 아님) 를 반환한다.
+4. 따라서 그 뒤의 **legacy clsact `veth_filter`(우리 BPF)는 호출되지 않는다** → `pkt_stats` 카운터 0.
+5. 물리 NIC ingress(`enp0s3`) 의 `ingress.bpf.o` 도 같은 이유 — Cilium `cil_from_netdev`(tcx) 가 먼저 처리.
+
+> **즉 "Cilium 우회" 라기보다 "tcx 가 clsact 보다 먼저 실행되고 비-UNSPEC 을 반환해 clsact 가 스킵된다" 가 정확한 메커니즘.** 다른 사람 환경에서 카운터가 찍혔다면 그 환경은 (a) kernel < 6.6 이라 Cilium 도 legacy clsact 를 쓰거나, (b) Cilium tcx 가 해당 device 에 없거나, (c) 우리 프로그램이 tcx 로 `BPF_F_BEFORE` 우선순위로 붙은 경우다.
+
+결과: **eBPF 통계는 0이지만 실험은 정상**. 이유는 talker가 `SO_PRIORITY=3`을 socket에 직접 설정하기 때문에 `skb->priority`가 자동 전파되고, prio qdisc가 그걸 보고 band 0으로 분류합니다. 우리 clsact eBPF의 역할은 보강(SO_PRIORITY 없는 외부 패킷도 분류)이지 실험에 필수는 아닙니다.
+
+> ⚠️ 카운터를 찍으려고 우리 프로그램을 tcx `BPF_F_BEFORE` 로 Cilium 앞에 끼워넣을 수도 있지만, Cilium datapath 와 간섭 위험이 있고 실험 결과(SO_PRIORITY + prio qdisc 기반)에는 영향이 없으므로 **본 repo는 attach 순서를 바꾸지 않습니다.**
 
 성능 차이는 **prio qdisc → band 0 dequeue 우선** 매커니즘에서 옵니다.
 
@@ -443,8 +449,8 @@ python3 compare_results.py
 │   │   ├── common.h
 │   │   ├── veth_filter.c                # 컨테이너 veth 패킷 분류
 │   │   ├── egress.c                     # 물리 NIC egress 로깅
-│   │   ├── ingress.c                    # 물리 NIC ingress 로깅
-│   │   └── xdp_vlan_avtp.c              # XDP VLAN/AVTP 처리
+│   │   └── ingress.c                    # 물리 NIC ingress 로깅
+│   │   # (xdp_vlan_avtp.c 는 2026-06 감사에서 제거 — dead code, 아래 "코드 감사" 절 참조)
 │   ├── stub-headers/                    # 커널 헤더 의존성 제거용 스텁
 │   ├── Makefile
 │   └── build/*.bpf.o                    # 사전 컴파일된 오브젝트 (커밋됨)
@@ -598,7 +604,6 @@ python3 compare_results.py
   │   - band 0: priority=3 (TSN)   │         │                       │
   │   - band 1: priority=2         │         │                       │
   │   - band 2: priority=0,1       │         │                       │
-  │ XDP: xdp_vlan_avtp.bpf.o       │         │                       │
   └────────────────────────────────┘         └───────────────────────┘
 ```
 
@@ -623,6 +628,53 @@ python3 compare_results.py
 | Routing | (가정) tunnel | Cilium `native` (bpf_redirect) | clsact BPF 우회됨 |
 
 **위 한계로 인해 절대 수치는 논문과 다르지만, 상대 개선율(baseline vs proposed) 경향은 재현됨.**
+
+---
+
+## 코드 감사 (2026-06) — 논문 충실도 및 정합성 점검
+
+7개 항목을 코드 라인 기준으로 점검하고 일부를 수정했습니다.
+
+### ✅ 수정한 항목
+
+**1) CPU 격리(isolcpus)를 실제로 사용하도록 연결**
+- 문제: `step2-os-setup/03-configure-isolcpus.sh` 가 CPU 2,3 을 격리하지만, 어떤 실험 프로세스도 그 코어에 바인딩되지 않았음(매니페스트가 `--cpu` 미전달). 4 vCPU VM에서는 격리만 하면 오히려 코어가 놀고 나머지가 0,1에 몰림.
+- 수정: `talker-job.yaml`, `listener-deployment.yaml` 에 `--cpu=2` 추가 → latency-critical 프로세스를 격리 코어에 고정. (talker.py/listener.py 의 `set_cpu_affinity` 는 실패 시 graceful — 격리 미적용/2vCPU 환경에서도 안전.)
+- 판단 근거: 논문 §III 가 네트워크 데이터플레인을 격리 코어에 dedicate 하므로, 바인딩이 **재현 목적상 의미 있음** → 제거가 아니라 연결을 택함.
+
+**3) 미사용 XDP(802.1Q/AVTP) 프로그램 제거**
+- 확인: 실험 트래픽은 plain UDP(VLAN 태그·AVTP 없음). `xdp_vlan_avtp.c` 는 모든 패킷을 `XDP_PASS` 로만 흘려보내고 분류/우선순위에 관여 안 함 → dead code. talker/listener/결과 CSV 어디에서도 VLAN/AVTP 미사용.
+- 수정: `src/xdp_vlan_avtp.c`, `build/xdp_vlan_avtp.bpf.o` 삭제, `Makefile`·`attach-ebpf.sh`·`deploy-experiment.sh`·`verify-experiment.sh` 에서 XDP attach/검증 제거. 나머지 3개 프로그램(vef/eg/ig) 빌드·동작은 영향 없음(독립 타겟).
+- 참고: XDP VLAN/AVTP 지원은 논문의 기여 중 하나지만, 본 재현 실험에서는 트래픽이 plain UDP라 한 번도 실행되지 않아 제거. 재현하려면 VLAN 태그/AVTP 트래픽을 생성하도록 talker 를 바꿔야 함.
+
+**6) ETF 자동 attach 제거 (TSN 패킷 전량 드롭 위험 차단)**
+- 확인: `talker.py` 는 `SO_TXTIME`/`SCM_TXTIME` 을 설정하지 않고 `sock.sendto()` 만 호출. `sch_etf` 의 `is_packet_valid()` 는 `SOCK_TXTIME` 없는 패킷을 INVALID로 보고 `qdisc_drop()` 함 → ETF가 band 0(tc0=TSN)에 붙으면 priority=3 패킷이 **전량 드롭**됨.
+- 수정: `deploy-experiment.sh:setup_tc_qdisc()` 의 ETF 자동 attach 블록 제거(주석으로 근거 명시). 학습용 참고 구현은 `step5-tc-qdisc/02-setup-etf.sh` 에 경고와 함께 보존.
+- 영향: 기존 VM 실험에서 ETF는 (CLOCK_TAI 부재로) 대개 attach 실패해 prio-only로 동작했음 → 제거해도 동작 동일. 단, ETF가 성공적으로 붙던 환경이라면 이 수정이 **패킷 드롭 버그를 제거**함.
+
+### 📋 점검만 한 항목 (코드 변경 없음 — 근거 포함)
+
+**2) ETF mqprio 우선순위 매핑 — 역전 아님 (수정 불필요)**
+- 전제 재검토: "논문은 tc2>tc1>tc0" 은 ETS 게이트 스케줄의 **시간 순서**(`sched-entry S 04`(tc2)→`S 02`(tc1)→`S 01`(tc0)) 를 우선순위로 오해한 것. 게이트 슬롯 크기는 tc0 가 750μs 로 가장 크고(보호 윈도우), ETF 도 tc0 에 붙음 → **tc0 = time-sensitive = 최고 우선순위**.
+- 우리 코드: `prio ... priomap 2 2 1 0` → priority 3 → band 0(최우선). `mqprio map 2 2 1 0` 도 동일. `setup-mqprio.sh` 주석 "tc0 → 큐 1(최고 우선순위, time-sensitive)". → 논문과 일치, 역전 없음.
+- 결론: ETF는 time-sensitive 큐(tc0)에 있어야 정상. tc2 로 옮기면 **오히려 회귀**라 변경하지 않음.
+
+**4) tcx vs clsact 실행 순서 — pkt_stats=0 의 진짜 원인**
+- 위 "결과 해석 > eBPF 카운터가 0인 이유" 절에 정정 반영. 요약: kernel ≥6.6 에서 tcx(Cilium)가 clsact(우리 BPF)보다 먼저 실행되고 비-UNSPEC 을 반환해 우리 프로그램이 스킵됨. 실험 결과는 SO_PRIORITY+prio 로 정상. attach 순서 변경은 Cilium 간섭 위험 + 실험 무관이라 하지 않음.
+
+**5) mqprio vs prio — 실제로는 prio 적용 중**
+- 추적: `deploy-experiment.sh:setup_tc_qdisc()` 는 `txq_count = ls /sys/class/net/$IF/queues/tx-*` 가 3 이상일 때만 mqprio 시도. VM virtio NIC 는 TX queue 1개 → mqprio 건너뜀 → `prio bands 3 priomap 2 2 1 0` 적용.
+- 결론: **현재 실제 적용 qdisc 는 `prio`(소프트웨어 strict-priority 3밴드)**. 멀티큐(mqprio)는 VM에 하드웨어 큐가 없어 비활성. (멀티큐를 켜려면 호스트/하이퍼바이저가 virtio multiqueue 를 노출해야 함.)
+
+**7) mqprio+ETF+ETS 통합 스크립트를 메인으로 못 쓰는 기술적 이유**
+- `setup-all-qdisc.sh`(taprio+ETF)는 VM에서 **attach 자체는 가능**하나, 다음 이유로 논문 결과를 충실히 재현할 수 없음:
+  1. **ETF child 가 TSN 패킷 전량 드롭** (항목 6 — talker가 SCM_TXTIME 미사용).
+  2. **software taprio 게이트 정밀도** 가 hrtimer(VM ~수십 μs) 에 의존 → 논문의 하드웨어 ns 정밀도 미달.
+  3. **CLOCK_TAI base-time 불일치**: `base-time=$(date +%s)…`(REALTIME) 인데 `clockid CLOCK_TAI` → TAI-UTC 오프셋(~37s)만큼 스케줄 어긋남.
+  4. **talker 가 게이트와 비동기**(sleep 페이싱, PTP 부정확) → tc0 게이트가 1ms 중 750μs 만 열리므로 패킷이 게이트 대기로 **latency/jitter 증가**.
+- 결론: 통합 스크립트로 전환하면 (드롭/지터 증가로) 실험이 **오히려 깨짐**. VM 환경에서 충실 재현이 불가능한 부분이라, 우선순위 dequeue 의도만 보존한 `prio` 가 가장 유효한 측정을 제공. → 메인 경로 `prio` 유지.
+
+> ⚠️ 위 수정은 Linux VM에서의 런타임 검증이 아직 필요합니다(본 작업은 Windows 호스트에서 코드 정적 분석 + 커널 동작 추론 기반). 특히 `--cpu=2` 바인딩 성공 여부와 prio-only 동작은 VM에서 `bash verify-experiment.sh` 로 확인 권장.
 
 ---
 
