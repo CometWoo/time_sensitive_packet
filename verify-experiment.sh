@@ -37,8 +37,7 @@ echo ""
 echo "[2] eBPF 프로그램 부착 상태 (enp0s3)"
 TC_EGRESS=$(sudo tc filter show dev enp0s3 egress 2>/dev/null | grep -c egress.bpf.o || true)
 if [ "$TC_EGRESS" -gt 0 ]; then ok "egress.bpf.o 부착됨"; else warn "egress.bpf.o 미부착"; fi
-XDP=$(ip link show enp0s3 | grep -c xdpgeneric || true)
-if [ "$XDP" -gt 0 ]; then ok "XDP 프로그램 부착됨"; else warn "XDP 미부착"; fi
+# (XDP 점검 제거됨 2026-06: XDP VLAN/AVTP 프로그램은 dead code라 삭제됨)
 VETH_COUNT=$(sudo bpftool net show 2>/dev/null | grep -c "veth_filter.bpf.o" || true)
 ok "veth_filter 부착된 인터페이스: ${VETH_COUNT}개"
 echo ""

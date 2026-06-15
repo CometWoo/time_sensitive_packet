@@ -12,6 +12,14 @@
 #   - VM virtio NIC에서는 하드웨어 오프로드 불가 → 소프트웨어 ETF만 동작
 #   - 소프트웨어 ETF도 커널에서 txtime 기반 스케줄링은 수행함
 #   - 정밀도: 하드웨어 ~1μs vs 소프트웨어 ~수십μs
+#
+# ⚠️ 중요 (2026-06 코드 감사):
+#   ETF(sch_etf)의 is_packet_valid()는 SOCK_TXTIME 플래그가 없는 패킷을 INVALID로
+#   판정해 qdisc_drop() 한다. 본 repo의 talker.py는 SO_TXTIME/SCM_TXTIME을 설정하지
+#   않으므로, 이 스크립트로 ETF를 band 0(tc0=TSN)에 붙이면 TSN 패킷이 전량 드롭된다.
+#   따라서 이 스크립트는 "ETF 동작 원리 학습/참고용"이며, 실제 실험(deploy-experiment.sh)
+#   에서는 ETF를 attach하지 않는다. ETF를 실제로 쓰려면 talker가 패킷마다 SCM_TXTIME으로
+#   미래 송신 시각을 지정하도록 수정해야 한다 (+PTP 동기화 + 하드웨어 LaunchTime).
 set -euo pipefail
 
 IFACE="${1:-$(ip route show default | awk '/default/ {print $5}' | head -1)}"

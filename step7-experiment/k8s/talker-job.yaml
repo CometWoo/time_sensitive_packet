@@ -156,6 +156,7 @@ spec:
             - "--interval=1"
             - "--count=10000"
             - "--size=128"
+            - "--cpu=2"             # isolcpus=2,3 으로 격리한 코어에 talker 고정 (스케줄링 jitter 제거)
             - "--log=/data/talker-log.csv"
             - "--vlan-priority=3"   # SO_PRIORITY=3 → prio qdisc band 0 (TSN)
           volumeMounts:

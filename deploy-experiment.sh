@@ -72,7 +72,7 @@ setup_ebpf() {
 
         log_info "eBPF 프로그램 컴파일..."
         make clean 2>/dev/null || true
-        make all DEBUG=2
+        make all
         log_info "컴파일 완료: $(ls build/*.bpf.o 2>/dev/null | tr '\n' ' ')"
     fi
 
@@ -92,26 +92,40 @@ setup_ebpf() {
         log_info "[Sender] egress attach 완료"
 
         # veth 인터페이스에 veth_filter attach
-        # Cilium은 lxc*, cilium_*, veth* 등 다양한 이름 사용
-        log_info "[Sender] veth_filter attach..."
-        log_info "  모든 veth 인터페이스 목록:"
+        #
+        # ── pkt_stats=0 문제 대응 (2026-06 감사, 항목 4) ──
+        # kernel >= 6.6 + Cilium 환경에서는 tcx(cil_from_container)가 legacy clsact 보다
+        # 먼저 실행되고 비-UNSPEC 을 반환하므로, clsact 로 붙인 veth_filter 는 스킵되어
+        # pkt_stats 가 0이 된다. 따라서 우선 tcx_ingress 로 attach 를 시도한다.
+        #   - veth_filter 는 항상 TC_ACT_UNSPEC 을 반환하는 "안전한 카운터"로 바뀌었으므로
+        #     tcx 체인에서 Cilium 보다 앞/뒤 어디에 있어도 Cilium datapath 를 깨지 않는다.
+        #   - bpftool 의 tcx attach 는 기본적으로 체인 끝(Cilium 뒤)에 붙을 수 있다. 그
+        #     경우 카운트가 안 될 수 있는데, 이는 무해하며 실험 측정(listener.py)에는 영향 없다.
+        #     Cilium 보다 확실히 먼저 실행시키려면 libbpf 의 BPF_F_BEFORE 로더가 필요하다
+        #     (VM에서 별도 검증 필요 — README "코드 감사" 절 참고).
+        #   - tcx 미지원/실패 시 legacy clsact 로 폴백한다.
+        log_info "[Sender] veth_filter attach (tcx 우선, clsact 폴백)..."
         ip link show type veth | awk -F': ' '/^[0-9]/{print "    " $2}'
         local veth_count=0
+        local tcx_ok=0
         for veth in $(ip link show type veth | awk -F': ' '/^[0-9]/{print $2}' | cut -d'@' -f1); do
-            tc qdisc add dev "$veth" clsact 2>/dev/null || true
-            if tc filter add dev "$veth" ingress bpf da obj build/veth_filter.bpf.o sec tc 2>/dev/null; then
-                log_info "  veth_filter → $veth (성공)"
+            if bpftool net attach tcx_ingress obj build/veth_filter.bpf.o sec tc dev "$veth" 2>/dev/null; then
+                log_info "  veth_filter(tcx) → $veth (성공)"
+                veth_count=$((veth_count + 1)); tcx_ok=1
+            elif { tc qdisc add dev "$veth" clsact 2>/dev/null || true; \
+                   tc filter add dev "$veth" ingress bpf da obj build/veth_filter.bpf.o sec tc 2>/dev/null; }; then
+                log_info "  veth_filter(clsact) → $veth (성공, tcx 미지원 폴백)"
                 veth_count=$((veth_count + 1))
             else
                 log_warn "  veth_filter → $veth (실패)"
             fi
         done
         if [ "$veth_count" -eq 0 ]; then
-            log_warn "veth_filter: attach된 인터페이스 없음!"
-            log_warn "  Cilium pod veth 인터페이스가 없거나 이름 패턴이 다를 수 있습니다"
+            log_warn "veth_filter: attach된 인터페이스 없음! (Cilium pod veth 미존재?)"
             log_warn "  수동 확인: ip link show type veth"
         else
-            log_info "veth_filter: ${veth_count}개 인터페이스에 attach됨"
+            log_info "veth_filter: ${veth_count}개 attach (tcx=${tcx_ok})"
+            [ "$tcx_ok" -eq 0 ] && log_warn "  tcx 미사용 — Cilium tcx 환경에서는 pkt_stats 가 0일 수 있음 (정상)"
         fi
     fi
 
@@ -122,13 +136,11 @@ setup_ebpf() {
         log_info "[Receiver] ingress attach 완료"
     fi
 
-    # XDP attach (양쪽 모두, VM에서는 generic 모드)
-    log_info "XDP 프로그램 attach (xdpgeneric)..."
-    ip link set dev "$PHYS_IF" xdpgeneric obj build/xdp_vlan_avtp.bpf.o sec xdp 2>/dev/null && {
-        log_info "XDP attach 완료"
-    } || {
-        log_warn "XDP attach 실패 (VM 환경에서 무시 가능)"
-    }
+    # XDP VLAN/AVTP attach 단계 제거됨 (2026-06 코드 감사):
+    #   실험 트래픽이 plain UDP라 XDP의 VLAN/AVTP 분류가 한 번도 호출되지 않는 dead code였음.
+    #   분류는 talker의 SO_PRIORITY=3 + prio qdisc(band 0)로 수행됨.
+    #   혹시 이전 실행에서 남은 XDP 프로그램이 있으면 정리만 수행:
+    ip link set dev "$PHYS_IF" xdp off 2>/dev/null || true
 
     # 검증
     log_info "=== Attach 검증 ==="
@@ -153,33 +165,63 @@ setup_tc_qdisc() {
     # 기존 root qdisc 제거
     tc qdisc del dev "$PHYS_IF" root 2>/dev/null || true
 
-    # TX queue 수 확인
+    # ── (항목 3) TX queue 를 늘려 하드웨어 큐 분리 mqprio 를 노려본다 ──
+    # virtio-net 은 멀티큐를 지원하면 ethtool -L combined N 으로 큐를 늘릴 수 있다
+    # (VirtualBox/하이퍼바이저가 노출해야 함; 보통 1개라 실패할 수 있음).
+    if command -v ethtool &>/dev/null; then
+        local max_combined
+        max_combined=$(ethtool -l "$PHYS_IF" 2>/dev/null | awk '/^Pre-set/{p=1} p&&/Combined:/{print $2; exit}')
+        if [ -n "${max_combined:-}" ] && [ "$max_combined" -ge 3 ] 2>/dev/null; then
+            log_info "virtio 멀티큐 가능 (최대 Combined=$max_combined) → 4 큐로 설정 시도"
+            ethtool -L "$PHYS_IF" combined 4 2>/dev/null || ethtool -L "$PHYS_IF" combined "$max_combined" 2>/dev/null || true
+        else
+            log_info "virtio 멀티큐 미지원/불명 (Pre-set Combined=${max_combined:-?}) — 소프트웨어 mqprio 시도"
+        fi
+    fi
+
+    # TX queue 수 재확인
     local txq_count
     txq_count=$(ls -d /sys/class/net/"$PHYS_IF"/queues/tx-* 2>/dev/null | wc -l)
     log_info "NIC TX queue 수: $txq_count"
 
     local qdisc_ok=0
 
-    # 시도 1: mqprio (다중 TX queue가 있을 때만)
+    # 시도 1a: 하드웨어 큐 분리 mqprio (TX queue >= 3 일 때 각 tc → 별도 큐)
     if [ "$txq_count" -ge 3 ]; then
-        log_info "mqprio 설정 시도 (TX queue $txq_count개)..."
+        log_info "mqprio(멀티큐) 설정 시도 (TX queue $txq_count개)..."
         if tc qdisc add dev "$PHYS_IF" root handle 100: mqprio \
             num_tc 3 \
             map 2 2 1 0 2 2 2 2 2 2 2 2 2 2 2 2 \
             queues 1@0 1@1 1@2 \
             hw 0 2>/dev/null; then
-            log_info "mqprio 설정 완료"
+            log_info "mqprio(멀티큐) 설정 완료"
             qdisc_ok=1
         else
-            log_warn "mqprio 설정 실패"
+            log_warn "mqprio(멀티큐) 실패"
         fi
-    else
-        log_info "TX queue 부족 ($txq_count < 3) — mqprio 건너뜀"
     fi
 
-    # 시도 2: prio qdisc (VM 폴백 — 소프트웨어 우선순위 큐)
+    # 시도 1b: 소프트웨어 mqprio (단일 큐에서도 시도 — 모든 tc 를 큐0에 매핑)
+    # 일부 커널은 겹치는 queues 매핑(1@0 1@0 1@0)을 거부하므로 num_tc 1 형태도 시도.
     if [ "$qdisc_ok" -eq 0 ]; then
-        log_info "prio qdisc 설정 (VM 호환 모드)..."
+        log_info "mqprio(소프트웨어, hw 0) 설정 시도..."
+        if tc qdisc add dev "$PHYS_IF" root handle 100: mqprio \
+            num_tc 3 \
+            map 2 2 1 0 2 2 2 2 2 2 2 2 2 2 2 2 \
+            queues 1@0 1@0 1@0 \
+            hw 0 2>/dev/null; then
+            log_info "mqprio(소프트웨어) 설정 완료 (겹침 큐 허용 커널)"
+            qdisc_ok=1
+        else
+            log_warn "mqprio(소프트웨어) 실패 — 단일 virtio 큐는 보통 겹침 큐를 거부 (정상)"
+        fi
+    fi
+
+    # 시도 2: prio qdisc (확실한 폴백 — 소프트웨어 strict-priority 3밴드)
+    # priomap 2 2 1 0 ... → priority 3=band0(최우선), 2=band1, 0/1=band2.
+    # mqprio 와 동일한 우선순위 dequeue 효과를 단일 큐에서 보장한다.
+    if [ "$qdisc_ok" -eq 0 ]; then
+        log_info "prio qdisc 설정 (VM 호환 폴백)..."
         if tc qdisc add dev "$PHYS_IF" root handle 100: prio \
             bands 3 \
             priomap 2 2 1 0 2 2 2 2 2 2 2 2 2 2 2 2 2>/dev/null; then
@@ -193,21 +235,23 @@ setup_tc_qdisc() {
         fi
     fi
 
-    # ETF 설정 시도 (mqprio/prio의 band 0 = time-sensitive)
-    log_info "ETF 설정 시도 (band 0)..."
-    if tc qdisc add dev "$PHYS_IF" parent 100:1 handle 10: etf \
-        clockid CLOCK_TAI \
-        delta 150000 \
-        deadline_mode on 2>/dev/null; then
-        log_info "ETF 설정 완료 (CLOCK_TAI)"
-    elif tc qdisc add dev "$PHYS_IF" parent 100:1 handle 10: etf \
-        clockid CLOCK_REALTIME \
-        delta 150000 \
-        deadline_mode on 2>/dev/null; then
-        log_info "ETF 설정 완료 (CLOCK_REALTIME)"
-    else
-        log_warn "ETF 미지원 — 우선순위 큐만 사용 (txtime 스케줄링 없음)"
-    fi
+    # ─────────────────────────────────────────────────────────────────────
+    # ETF 자동 attach 제거됨 (2026-06 코드 감사)
+    #
+    # 이유: talker.py 는 SO_TXTIME(SCM_TXTIME)을 설정하지 않고 sock.sendto()만 호출함.
+    #   ETF(sch_etf)의 is_packet_valid() 는 SOCK_TXTIME 플래그가 없는 패킷을 INVALID로
+    #   판정하고 qdisc_drop() 한다 (net/sched/sch_etf.c). 즉 ETF가 band 0에 성공적으로
+    #   붙으면 → priority=3(TSN) 패킷이 전부 band 0 = ETF 로 들어가 → **전량 드롭**된다.
+    #   (deadline_mode on 이면 txtime=0 이 과거라 더더욱 드롭.)
+    #
+    #   또한 VM virtio NIC은 하드웨어 LaunchTime(offload)을 지원하지 않으므로 ETF의
+    #   본래 목적(정밀 송신 시각)은 어차피 재현 불가. 따라서 ETF는 "효과 없음(드롭 안 될 때)"
+    #   또는 "전량 드롭(드롭될 때)" 의 양자택일이라 main 경로에서 제외한다.
+    #
+    #   ETF를 실제로 동작시키려면 talker가 패킷마다 SCM_TXTIME으로 미래 송신 시각을
+    #   지정해야 하며, PTP 동기화와 하드웨어 LaunchTime이 필요하다. 단계별 학습용
+    #   참고 구현은 step5-tc-qdisc/02-setup-etf.sh 에 남겨 둠.
+    # ─────────────────────────────────────────────────────────────────────
 
     log_info "최종 Qdisc 상태:"
     tc qdisc show dev "$PHYS_IF"
@@ -319,6 +363,14 @@ run_experiment() {
         kubectl apply -f -
     sleep 5
 
+    # (항목 8) 선택적 Hubble 캡처 — HUBBLE=1 일 때만. 정상 실험에는 영향 없음.
+    if [ "${HUBBLE:-0}" = "1" ] && command -v hubble &>/dev/null; then
+        log_info "Hubble 캡처 시작 (UDP 5000) → $RESULTS_DIR/hubble_${MODE}_cpu${CPU_LOAD}.json"
+        bash "$SCRIPT_DIR/step8-measurement/hubble-monitor.sh" start \
+            "$RESULTS_DIR/hubble_${MODE}_cpu${CPU_LOAD}.json" 2>/dev/null || \
+            log_warn "Hubble 캡처 시작 실패 (enable 안 됨? — step8-measurement/hubble-monitor.sh enable)"
+    fi
+
     # Talker ConfigMap + Job 배포
     log_info "Talker Job 실행..."
     kubectl apply -f "$K8S_DIR/talker-job.yaml"
@@ -355,6 +407,11 @@ run_experiment() {
     # 부하 제거
     kubectl -n tsn-experiment delete daemonset cpu-stress --ignore-not-found=true 2>/dev/null || true
 
+    # (항목 8) Hubble 캡처 종료
+    if [ "${HUBBLE:-0}" = "1" ] && command -v hubble &>/dev/null; then
+        bash "$SCRIPT_DIR/step8-measurement/hubble-monitor.sh" stop 2>/dev/null || true
+    fi
+
     # eBPF 통계 출력
     log_info "=== eBPF 통계 ==="
     if command -v bpftool &>/dev/null; then
@@ -370,20 +427,7 @@ try:
         print(f'  map_id={mid}: TOTAL={vals.get(0,0)} TSN={vals.get(1,0)} BEST_EFF={vals.get(2,0)} DROP={vals.get(3,0)}')
 except: print('  (파싱 실패)')
 " 2>/dev/null || echo "  (pkt_stats 없음 — sudo로 실행하세요)"
-        echo "--- debug_stats (0이 아닌 값만) ---"
-        bpftool map dump name debug_stats 2>/dev/null | python3 -c "
-import sys, json
-labels = {0:'ETH_SHORT',4:'NOT_IP',5:'NOT_UDP',8:'TSN_PORT',9:'TSN_PCP',13:'PROG_ENTER'}
-try:
-    data = json.load(sys.stdin)
-    for m in data:
-        mid = m.get('id', '?')
-        nonzero = [(e['key'], e['value']) for e in m.get('elements', []) if e['value'] > 0]
-        if nonzero:
-            parts = [f'{labels.get(k,str(k))}={v}' for k, v in nonzero]
-            print(f'  map_id={mid}: {\"  \".join(parts)}')
-except: pass
-" 2>/dev/null
+        # debug_stats 맵은 2026-06 감사에서 제거됨. 카운터는 pkt_stats 만 사용.
     else
         echo "(bpftool 없음)"
     fi
@@ -412,6 +456,8 @@ cleanup() {
     ip link set dev "$PHYS_IF" xdp off 2>/dev/null || true
 
     for veth in $(ip link show type veth | awk -F': ' '/^[0-9]/{print $2}' | cut -d'@' -f1 | grep -E '^lxc|^veth'); do
+        # tcx 링크 detach (항목 4) + clsact 제거
+        bpftool net detach tcx_ingress dev "$veth" 2>/dev/null || true
         tc qdisc del dev "$veth" clsact 2>/dev/null || true
     done
 
@@ -495,28 +541,16 @@ except:
 " 2>/dev/null || echo "  (pkt_stats 없음)"
 
     echo ""
-    echo "=== Debug Stats (debug_stats) ==="
-    echo "  [0]ETH_SHORT [4]NOT_IP [5]NOT_UDP [8]TSN_PORT [9]TSN_PCP [13]PROG_ENTER"
-    bpftool map dump name debug_stats 2>/dev/null | python3 -c "
+    echo "=== Debug Level (debug_level map, 런타임 디버그 토글) ==="
+    bpftool map dump name debug_level 2>/dev/null | python3 -c "
 import sys, json
-labels = {0:'ETH_SHORT',1:'VLAN_FAIL',2:'IP_SHORT',3:'UDP_SHORT',
-          4:'NOT_IP',5:'NOT_UDP',6:'VLAN_TAG',7:'AVTP',
-          8:'TSN_PORT',9:'TSN_PCP',10:'RINGBUF_FAIL',11:'MAP_FAIL',
-          12:'UNK_PROTO',13:'PROG_ENTER',14:'IHL_BAD'}
 try:
     data = json.load(sys.stdin)
     for m in data:
-        mid = m.get('id', '?')
-        elems = m.get('elements', [])
-        nonzero = [(e['key'], e['value']) for e in elems if e['value'] > 0]
-        if nonzero:
-            parts = [f'{labels.get(k,str(k))}={v}' for k, v in nonzero]
-            print(f'  map_id={mid}: {\"  \".join(parts)}')
-        else:
-            print(f'  map_id={mid}: (모두 0)')
-except:
-    print('  (파싱 실패)')
-" 2>/dev/null || echo "  (debug_stats 없음)"
+        for e in m.get('elements', []):
+            print(f'  map_id={m.get(\"id\",\"?\")}: debug_level={e[\"value\"]}  (0=off 1=ERR 2=WARN 3=INFO 4=TRACE)')
+except: print('  (debug_level 없음)')
+" 2>/dev/null || echo "  (debug_level 없음)"
 
     echo ""
     echo "=== Cilium 네트워크 모드 ==="
@@ -548,7 +582,7 @@ case "${1:-help}" in
             fi
         done
         make clean 2>/dev/null || true
-        make all DEBUG=2
+        make all
         log_info "컴파일 완료. 다른 노드로 배포하려면:"
         log_info "  cd $SCRIPT_DIR && git add step6-ebpf/build/ && git commit -m 'add pre-built ebpf' && git push"
         log_info "  (다른 노드에서) git pull"
