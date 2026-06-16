@@ -1,4 +1,14 @@
-# explain_02 — ingress BPF 프로그램 (수신 카운트 + 타임스탬프)
+# explain_02 — (제거됨) ingress BPF 프로그램
+
+> ⚠️ **2026-06 단일 프로그램 재설계로 이 ingress BPF 프로그램(ingress.c)은 제거되었습니다.**
+> 현재 eBPF 는 송신측 `vnic_filter` 하나뿐입니다([explain_01](explain_01_bpf_egress.md) 참조).
+> **수신측 측정은 BPF 가 아니라 `listener.py`(userspace)가 담당**합니다 — latency/jitter 계산,
+> CSV 저장 모두 listener.py 에서 수행됩니다([explain_05](explain_05_listener.md) 참조).
+> 아래 내용은 삭제된 설계에 대한 기록입니다.
+
+---
+
+# (이전 기록) ingress BPF 프로그램 (수신 카운트 + 타임스탬프)
 
 > 대상 파일: `step6-ebpf/src/ingress.c` (+ 공유 헤더 `step6-ebpf/src/common.h`)
 > 논문 Figure 1의 "ig" 프로그램. 수신측 호스트 물리 NIC ingress(clsact)에 attach.

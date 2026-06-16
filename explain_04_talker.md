@@ -1,5 +1,12 @@
 # explain_04 — talker.py (SO_PRIORITY, SO_TXTIME, 전송 로직)
 
+> ⚠️ **2026-06 재설계 반영**: 포트는 **6000**, `--vlan-priority=6`(SO_PRIORITY=6),
+> 그리고 `--start-delay=8`(송신 전 대기 — Pod eth0 에 vnic_filter 를 attach 할 시간 확보)이
+> 추가되었다. 아래 본문의 포트 5000 / priority 3 은 옛 설계 기준이므로 6000 / 6 으로 읽어줘.
+> (SO_TXTIME 미사용은 그대로 유효.)
+
+---
+
 > 대상 파일: `step7-experiment/talker/talker.py` (K8s 주입본은 `step7-experiment/k8s/talker-job.yaml`)
 > Host-s(master)에서 1ms 간격으로 UDP 패킷을 송신하는 talker.
 

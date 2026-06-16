@@ -1,128 +1,103 @@
-# explain_01 — egress BPF 프로그램 (TC 분류 + pkt_stats)
+# explain_01 — vnic_filter BPF 프로그램 (Pod eth0 egress 분류 + pkt_count)
 
-> 대상 파일: `step6-ebpf/src/egress.c` (+ 공유 헤더 `step6-ebpf/src/common.h`)
-> 논문 Figure 1의 "eg" 프로그램. 호스트 물리 NIC egress(clsact)에 attach되어
-> 송신 패킷을 분류하고 `pkt_stats` 카운터를 증가시킨다.
+> 대상 파일: `step6-ebpf/src/vnic_filter.c` (단일 eBPF 프로그램)
+> Pod 내부 eth0 의 TC egress hook 에 attach 되어 TS 패킷을 분류하고,
+> `skb->priority=6` 을 설정하며 `pkt_count` 카운터를 증가시킨다.
 
 ## 코드
 
 ```c
-/* egress.c (eg) — 호스트 물리 NIC egress eBPF 프로그램 */
-#include "common.h"
+// SPDX-License-Identifier: GPL-2.0
+#include <linux/bpf.h>
+#include <linux/pkt_cls.h>
+#include <linux/if_ether.h>
+#include <linux/ip.h>
+#include <linux/udp.h>
+#include <linux/in.h>
+#include <bpf/bpf_helpers.h>
+#include <bpf/bpf_endian.h>
 
-/* skb->priority → TC class 매핑 (prio/mqprio priomap과 일치해야 함) */
-static __always_inline __u8 priority_to_tc(__u8 prio)
+#define AVTP_ETHERTYPE  0x22F0   /* IEEE 1722 AVTP */
+#define TS_VLAN_PCP_MIN 5        /* VLAN PCP 5,6,7 = TS */
+#define TS_UDP_PORT     6000     /* 실험용 TS UDP 포트 */
+#define TS_PRIORITY     6        /* prio 기본 priomap → band 0 */
+
+/* 패킷 카운터: key 0 = 일반, key 1 = TS */
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 2);
+    __type(key, __u32);
+    __type(value, __u64);
+} pkt_count SEC(".maps");
+
+static __always_inline int is_ts_pkt(struct __sk_buff *skb)
 {
-    switch (prio) {
-    case 3:  return TC_CLASS_HIGH;  /* tc0 */
-    case 2:  return TC_CLASS_MED;   /* tc1 */
-    default: return TC_CLASS_LOW;   /* tc2 */
+    void *data     = (void *)(long)skb->data;
+    void *data_end = (void *)(long)skb->data_end;
+    struct ethhdr *eth = data;
+    if ((void *)(eth + 1) > data_end) return 0;
+    __u16 proto = bpf_ntohs(eth->h_proto);
+
+    if (proto == AVTP_ETHERTYPE) return 1;                     /* 분류 1: AVTP */
+
+    if (proto == ETH_P_8021Q) {                               /* 분류 2: VLAN PCP>=5 */
+        __u16 *tci = (void *)(eth + 1);
+        if ((void *)(tci + 1) > data_end) return 0;
+        __u8 pcp = (bpf_ntohs(*tci) >> 13) & 0x7;
+        if (pcp >= TS_VLAN_PCP_MIN) return 1;
     }
+
+    if (proto == ETH_P_IP) {                                  /* 분류 3: UDP:6000 */
+        struct iphdr *ip = (void *)(eth + 1);
+        if ((void *)(ip + 1) > data_end) return 0;
+        if (ip->protocol != IPPROTO_UDP) return 0;
+        struct udphdr *udp = (void *)ip + (ip->ihl * 4);
+        if ((void *)(udp + 1) > data_end) return 0;
+        if (bpf_ntohs(udp->dest) == TS_UDP_PORT) return 1;
+    }
+    return 0;
 }
 
 SEC("tc")
-int egress_prog(struct __sk_buff *skb)
+int vnic_filter(struct __sk_buff *skb)
 {
-    void *data = (void *)(long)skb->data;
-    void *data_end = (void *)(long)skb->data_end;
-    struct ethhdr *eth = data;
-
-    if ((void *)(eth + 1) > data_end) {
-        DBG_ERR("eg: pkt too short for eth (len=%d)", skb->len);
-        return TC_ACT_OK;
-    }
-    stats_inc(STATS_TOTAL);
-
-    __u16 eth_proto = eth->h_proto;
-    __u16 inner_proto = eth_proto;
-    void *l3_hdr = (void *)(eth + 1);
-
-    DBG_TRACE("eg: proto=0x%04x len=%d pri=%d",
-              bpf_ntohs(eth_proto), skb->len, skb->priority);
-
-    /* VLAN 태그 처리 */
-    if (eth_proto == bpf_htons(ETH_P_8021Q) ||
-        eth_proto == bpf_htons(ETH_P_8021AD)) {
-        int pcp = get_vlan_pcp(skb);
-        if (pcp >= 0) {
-            skb->priority = pcp;
-            DBG_INFO("eg: VLAN pcp=%d → priority=%d", pcp, pcp);
-        }
-        struct vlan_hdr {
-            __be16 h_vlan_TCI;
-            __be16 h_vlan_encapsulated_proto;
-        } *vhdr = l3_hdr;
-        if ((void *)(vhdr + 1) > data_end) {
-            DBG_ERR("eg: pkt too short for vlan hdr");
-            return TC_ACT_OK;
-        }
-        inner_proto = vhdr->h_vlan_encapsulated_proto;
-        l3_hdr = (void *)(vhdr + 1);
-    }
-
-    if (inner_proto != bpf_htons(ETH_P_IP)) {
-        DBG_TRACE("eg: not IP (inner_proto=0x%04x)", bpf_ntohs(inner_proto));
-        stats_inc(STATS_BEST_EFF);
-        return TC_ACT_OK;
-    }
-
-    struct iphdr *iph = l3_hdr;
-    if ((void *)(iph + 1) > data_end) {
-        DBG_ERR("eg: pkt too short for ip hdr");
-        return TC_ACT_OK;
-    }
-    if (iph->ihl < 5) {
-        DBG_ERR("eg: invalid ihl=%d", iph->ihl);
-        return TC_ACT_OK;
-    }
-    if (iph->protocol != IPPROTO_UDP) {
-        DBG_TRACE("eg: IP proto=%d (not UDP)", iph->protocol);
-        stats_inc(STATS_BEST_EFF);
-        return TC_ACT_OK;
-    }
-
-    struct udphdr *udph = (void *)iph + (iph->ihl * 4);
-    if ((void *)(udph + 1) > data_end) {
-        DBG_ERR("eg: pkt too short for udp hdr (ihl=%d)", iph->ihl);
-        return TC_ACT_OK;
-    }
-
-    __u16 dport = bpf_ntohs(udph->dest);
-    __u8  tc_class = priority_to_tc(skb->priority);
-
-    if (dport == 5000 || skb->priority == TSN_VLAN_PRI_HIGH) {
-        DBG_INFO("eg: TSN pkt dport=%d pri=%d tc=%d", dport, skb->priority, tc_class);
-        stats_inc(STATS_TSN);
-    } else {
-        DBG_TRACE("eg: best-effort dport=%d tc=%d", dport, tc_class);
-        stats_inc(STATS_BEST_EFF);
-    }
+    __u32 key;
+    __u64 *cnt;
+    if (is_ts_pkt(skb)) { skb->priority = TS_PRIORITY; key = 1; }
+    else                { skb->priority = 0;           key = 0; }
+    cnt = bpf_map_lookup_elem(&pkt_count, &key);
+    if (cnt) __sync_fetch_and_add(cnt, 1);
     return TC_ACT_OK;
 }
-
 char _license[] SEC("license") = "GPL";
 ```
 
-> 참고: 2026-06 감사로 이 프로그램에서 ring buffer 로깅(egress_log)과 debug_stats
-> map이 제거되었고, 컴파일타임 DEBUG_LEVEL 매크로는 런타임 `debug_level` BPF map
-> 기반(common.h의 `DBG_*` 매크로 → `dbg_level()`)으로 통일되었다.
+빌드/로드:
+```bash
+make -C step6-ebpf                       # → build/vnic_filter.bpf.o
+# Pod eth0(netns 내부)에 attach (attach-vnic.sh 가 자동화):
+sudo nsenter -t $PID -n -- tc qdisc add dev eth0 clsact
+sudo nsenter -t $PID -n -- tc filter add dev eth0 egress bpf da obj build/vnic_filter.bpf.o sec tc
+```
 
 ## Gemini에게 보낼 설명 요청 프롬프트
 
-다음은 Linux TSN(Time-Sensitive Networking) 실험 환경의 **egress BPF 프로그램(TC 분류 + pkt_stats)** 코드야. 아래 항목을 설명해줘:
+다음은 Linux TSN(Time-Sensitive Networking) 실험 환경의 **vnic_filter BPF 프로그램(Pod eth0 egress 분류 + pkt_count)** 코드야. 아래 항목을 설명해줘:
 
 1. 핵심 함수/구조체/map을 하나씩 설명 (입력, 출력, 동작 원리)
-   - `egress_prog(struct __sk_buff *skb)`: TC(clsact) egress 훅 콜백. 입력은 송신 패킷의 `__sk_buff`, 출력은 TC action(`TC_ACT_OK`). 이더넷→(VLAN)→IP→UDP 헤더를 경계 검사하며 파싱하고 `pkt_stats`를 증가시키는 흐름을 설명해줘.
-   - `priority_to_tc(__u8 prio)`: `skb->priority`(SO_PRIORITY로 설정됨)를 TC class(tc0/tc1/tc2)로 매핑. prio 3→tc0, 2→tc1, 그 외→tc2가 왜 이렇게 매핑되는지(논문 Table I) 설명해줘.
-   - `struct __sk_buff`, `struct ethhdr/iphdr/udphdr`: 각 필드(`data`, `data_end`, `priority`, `h_proto`, `ihl`, `protocol`, `dest`)의 의미.
-   - `pkt_stats` map: `STATS_TOTAL/TSN/BEST_EFF` 인덱스의 의미.
+   - `vnic_filter(struct __sk_buff *skb)`: TC egress 콜백. 입력은 Pod eth0 로 나가는 패킷, 출력은 `TC_ACT_OK`. TS면 priority 6 설정 + pkt_count[1]++, 아니면 priority 0 + pkt_count[0]++.
+   - `is_ts_pkt()`: AVTP(0x22F0) / VLAN PCP≥5 / UDP dport 6000 세 가지 분류 기준과 각 경계 검사.
+   - `pkt_count` (ARRAY[2], u64): key 0=일반, key 1=TS. `__sync_fetch_and_add` 원자적 증가.
+   - `struct ethhdr/iphdr/udphdr`, `skb->data/data_end/priority` 의미.
 2. 코드, 문법 부분 설명
-   - `void *data = (void *)(long)skb->data;` 형변환이 왜 필요한지, BPF verifier의 경계 검사(`(void *)(eth+1) > data_end`)가 왜 필수인지.
-   - `bpf_htons/bpf_ntohs`(바이트 오더), `iph->ihl * 4`(가변 IP 헤더 길이) 계산.
-   - `SEC("tc")`, `__always_inline`, `char _license[] SEC("license")="GPL"`의 역할.
+   - `(void *)(long)skb->data` 형변환, `(void *)(eth+1) > data_end` 경계 검사가 BPF verifier 에 필수인 이유.
+   - `bpf_ntohs`, VLAN TCI 의 `(tci>>13)&0x7` PCP 추출, `ip->ihl*4` 가변 헤더 길이.
+   - `SEC("tc")`, `__always_inline`, `char _license[]="GPL"`.
 3. 다른 파일과의 연관 관계 (어디서 호출되고 어디에 영향을 주는지)
-   - `common.h`의 `stats_inc()`, `get_vlan_pcp()`, `DBG_*`(런타임 debug_level) 매크로, `pkt_stats` map 정의를 공유한다.
-   - `deploy-experiment.sh`의 `setup_ebpf()`가 `tc filter add dev <PHYS_IF> egress bpf da obj egress.bpf.o`로 attach한다.
-   - 송신 측 `talker.py`가 `SO_PRIORITY=3`을 설정해 `skb->priority=3`이 되고, 이 프로그램은 그것을 읽어 분류한다(직접 바꾸지 않음).
-4. 실험 결과(pkt_stats, jitter)와 이 코드의 연결 고리
-   - 이 프로그램의 `STATS_TSN` 카운트가 실제로 0이 아닐 조건(Cilium tcx 우회와의 관계)을 설명하고, latency/jitter 측정 자체는 listener.py가 담당하며 이 프로그램은 "TSN 패킷이 NIC egress까지 분류되어 도달했는가"의 가시성을 제공한다는 점을 연결해줘.
+   - `step6-ebpf/attach-vnic.sh` 가 `crictl`+`nsenter` 로 talker Pod eth0 egress 에 attach.
+   - `deploy-experiment.sh run_experiment()` 가 talker Pod Running 시 attach-vnic.sh 를 호출.
+   - 설정한 priority 6 이 enp0s3 의 `prio` qdisc(기본 priomap → band 0)로 이어진다.
+   - talker.py 도 `SO_PRIORITY=6` 을 설정하므로 priority 6 은 이중 보장된다.
+4. 실험 결과(pkt_count, jitter)와 이 코드의 연결 고리
+   - 왜 Pod eth0 egress(netns 내부)에 붙여야 Cilium tcx 우회 없이 pkt_count 가 찍히는지.
+   - priority 6 + prio qdisc(band 0)가 baseline(fq_codel) 대비 p99 latency/jitter 를 어떻게 줄이는지. (jitter 측정 자체는 listener.py 가 담당)

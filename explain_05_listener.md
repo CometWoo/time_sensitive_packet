@@ -1,5 +1,11 @@
 # explain_05 — listener.py (수신, jitter 계산, 결과 출력)
 
+> ⚠️ **2026-06 재설계 반영**: 수신 포트가 **6000** 으로 바뀌었다(아래 본문 5000 → 6000).
+> 단일 프로그램 설계에서 **수신측 BPF 는 없으며, listener.py 가 유일한 수신측 측정기**이다
+> (jitter/latency 계산·CSV 저장). 그 외 로직은 동일하다.
+
+---
+
 > 대상 파일: `step7-experiment/listener/listener.py` (K8s 주입본은 `step7-experiment/k8s/listener-deployment.yaml`)
 > Host-r(worker01)에서 UDP 패킷을 수신하고 latency/jitter를 측정해 CSV로 저장한다.
 

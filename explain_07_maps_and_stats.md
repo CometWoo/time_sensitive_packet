@@ -1,5 +1,16 @@
 # explain_07 — BPF map 구조 전체 및 유저스페이스 접근 방식
 
+> ⚠️ **2026-06 재설계 반영**: 단일 프로그램 설계에서 BPF map 은 **`pkt_count`(ARRAY[2]: key0=일반,
+> key1=TS) 하나뿐**이다. `debug_level`/`pkt_stats`/`last_arrival`/ringbuf 는 모두 제거되었다.
+> 또한 `pkt_count` 는 호스트가 아니라 **talker Pod 의 netns** 안에 있으므로 유저스페이스 접근은
+> `nsenter` 로 들어가서 한다:
+> ```bash
+> sudo bash step6-ebpf/attach-vnic.sh show tsn-experiment <talker-pod>   # → pkt_count dump
+> ```
+> 아래 본문(debug_level/pkt_stats/last_arrival)은 옛 설계 기록이다.
+
+---
+
 > 대상: `step6-ebpf/src/common.h`(공유 map/헬퍼) + `step6-ebpf/debug-stats.sh`(유저스페이스 접근)
 > + `ingress.c`의 `last_arrival` map.
 > 2026-06 감사 후 남은 map은 **3개**: `debug_level`, `pkt_stats`, `last_arrival`.

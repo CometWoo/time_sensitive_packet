@@ -7,7 +7,7 @@
   - listener가 수신하여 latency/jitter 측정
 
 사용법:
-  python3 talker.py --target <listener_ip> --port 5000 --interval 1 --count 10000
+  python3 talker.py --target <listener_ip> --port 6000 --interval 1 --count 10000
 """
 import argparse
 import socket
@@ -45,7 +45,7 @@ def set_realtime_priority(priority=50):
 def main():
     parser = argparse.ArgumentParser(description="TSN Talker — UDP 패킷 전송기")
     parser.add_argument("--target", required=True, help="Listener IP 주소")
-    parser.add_argument("--port", type=int, default=5000, help="대상 포트 (기본: 5000)")
+    parser.add_argument("--port", type=int, default=6000, help="대상 포트 (기본: 6000 = vnic_filter TS_UDP_PORT)")
     parser.add_argument("--interval", type=float, default=1.0,
                         help="전송 간격 (ms, 기본: 1.0)")
     parser.add_argument("--count", type=int, default=10000,
@@ -58,6 +58,8 @@ def main():
                         help="SCHED_FIFO 실시간 스케줄링 사용")
     parser.add_argument("--vlan-priority", type=int, default=-1,
                         help="SO_PRIORITY 설정 (VLAN PCP 매핑)")
+    parser.add_argument("--start-delay", type=float, default=0.0,
+                        help="송신 시작 전 대기(초). Pod eth0에 eBPF를 attach할 시간 확보용")
     parser.add_argument("--log", default="",
                         help="전송 로그 파일 경로 (CSV)")
     args = parser.parse_args()
@@ -89,6 +91,11 @@ def main():
     print(f"Talker 시작: {args.target}:{args.port}")
     print(f"  간격: {args.interval}ms, 패킷 수: {args.count}, 크기: {args.size}B")
     print(f"  예상 소요시간: {args.count * interval_s:.1f}s")
+
+    # Pod eth0에 vnic_filter eBPF를 attach할 시간을 확보 (호스트 측 nsenter attach 대기)
+    if args.start_delay > 0:
+        print(f"  송신 전 대기: {args.start_delay}s (eBPF attach 시간 확보)")
+        time.sleep(args.start_delay)
     print("-" * 50)
 
     sent = 0

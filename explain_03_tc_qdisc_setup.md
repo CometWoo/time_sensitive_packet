@@ -1,4 +1,20 @@
-# explain_03 — TC qdisc 설정 스크립트 (mqprio / prio / ETF)
+# explain_03 — TC qdisc 설정 스크립트 (prio / fq_codel)
+
+> ⚠️ **2026-06 재설계 반영**: priority 가 **6** 으로 바뀌어 리눅스 `prio` 의 **기본 priomap**
+> (priority 6,7 → band 0)을 그대로 쓴다. 따라서 커스텀 priomap·mqprio·ETF 시도가 모두 사라지고,
+> proposed = `tc qdisc add dev enp0s3 root prio bands 3` 한 줄, baseline = `fq_codel`(우선순위 밴드 없음)
+> 로 단순화되었다. 아래 본문의 mqprio/ETF/`priomap 2 2 1 0`/priority 3 서술은 옛 설계 기록이다.
+> 최신 코드:
+> ```bash
+> # proposed
+> tc qdisc add dev enp0s3 root handle 100: prio bands 3   # 기본 priomap: priority 6 → band 0
+> # baseline
+> tc qdisc add dev enp0s3 root fq_codel                   # 밴드 없음 (대조군)
+> ```
+
+---
+
+# (이전 기록) TC qdisc 설정 스크립트 (mqprio / prio / ETF)
 
 > 대상: `deploy-experiment.sh`의 `setup_tc_qdisc()` (메인 경로)
 > + 참고용 `step5-tc-qdisc/01-setup-mqprio.sh`, `02-setup-etf.sh`, `setup-all-qdisc.sh`

@@ -7,11 +7,9 @@
 #   make check-env          — 빌드 환경 검증
 #   make clean              — 정리
 #
-# 디버그(런타임 토글, debug_level map):
-#   sudo bpftool map update name debug_level key 0 0 0 0 value 3 0 0 0
-#   sudo cat /sys/kernel/debug/tracing/trace_pipe
-# 통계 확인:
-#   sudo bpftool map dump name pkt_stats
+# 단일 프로그램: vnic_filter (Pod eth0 egress 분류 + pkt_count)
+# 카운터 확인 (talker Pod netns 내부, key0=일반 key1=TS):
+#   sudo bash attach-vnic.sh show tsn-experiment <talker-pod>   # → pkt_count
 
 CLANG    ?= clang
 LLC      ?= llc
@@ -41,9 +39,9 @@ BPF_CFLAGS := -g -O2 \
 
 SRCDIR   := src
 BUILDDIR := build
-# xdp_vlan_avtp 제거됨 (2026-06): 실험 트래픽이 plain UDP라 XDP의 VLAN/AVTP 분류가
-# 한 번도 호출되지 않음 → dead code. 자세한 근거는 README "코드 감사" 절 참조.
-PROGS    := veth_filter egress ingress
+# 단일 프로그램 설계 (2026-06): vef/eg/ig 3개 프로그램을 vnic_filter 하나로 통합.
+# Pod eth0 egress(netns 내부)에 attach → Cilium tcx 우회 문제 없이 카운터가 찍힘.
+PROGS    := vnic_filter
 
 OBJS     := $(addprefix $(BUILDDIR)/, $(addsuffix .bpf.o, $(PROGS)))
 
@@ -59,10 +57,9 @@ help:
 	@echo "  make verify           빌드된 오브젝트 검증"
 	@echo "  make clean            정리"
 	@echo ""
-	@echo "디버그는 런타임 debug_level BPF map 으로 제어:"
-	@echo "  sudo bpftool map update name debug_level key 0 0 0 0 value 3 0 0 0"
-	@echo "  레벨: 0=off 1=ERR 2=+WARN 3=+INFO 4=+TRACE"
-	@echo "  로그: sudo cat /sys/kernel/debug/tracing/trace_pipe"
+	@echo "카운터 확인 (Pod netns 내부):"
+	@echo "  sudo nsenter -t <PID> -n -- bpftool map dump name pkt_count"
+	@echo "  key 0 = 일반 패킷, key 1 = TS 패킷"
 
 all: check-env-quiet $(BUILDDIR) $(OBJS)
 	@echo ""
@@ -72,14 +69,12 @@ all: check-env-quiet $(BUILDDIR) $(OBJS)
 $(BUILDDIR):
 	mkdir -p $(BUILDDIR)
 
-$(BUILDDIR)/%.bpf.o: $(SRCDIR)/%.c $(SRCDIR)/common.h
+$(BUILDDIR)/%.bpf.o: $(SRCDIR)/%.c
 	@echo "[BPF] $< → $@"
 	$(CLANG) $(BPF_CFLAGS) -c $< -o $@
 
 # 개별 빌드 타겟
-veth_filter:    $(BUILDDIR) $(BUILDDIR)/veth_filter.bpf.o
-egress:         $(BUILDDIR) $(BUILDDIR)/egress.bpf.o
-ingress:        $(BUILDDIR) $(BUILDDIR)/ingress.bpf.o
+vnic_filter:    $(BUILDDIR) $(BUILDDIR)/vnic_filter.bpf.o
 
 # ──────────────────────────────────────────────
 # 빌드 환경 검증 (상세)

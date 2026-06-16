@@ -1,5 +1,13 @@
 # explain_06 — deploy-experiment.sh 전체 흐름
 
+> ⚠️ **2026-06 재설계 반영**: `setup_ebpf()` 는 이제 **빌드만** 하고 호스트측 attach 를 하지 않는다.
+> 대신 `run_experiment()` 가 talker Pod 이 Running 되면 `attach-vnic.sh` 로 **Pod eth0 egress(netns)**
+> 에 vnic_filter 를 attach 한다(talker `--start-delay` 동안). qdisc 는 proposed=`prio`(기본 priomap),
+> baseline=`fq_codel` 로 단순화. 카운터는 `pkt_count`(talker netns 안)이며 송신 중 스냅샷으로 읽는다.
+> 아래 본문의 sender/receiver host-side attach·mqprio·pkt_stats 서술은 옛 설계 기록이다.
+
+---
+
 > 대상 파일: `deploy-experiment.sh` (실험 메인 자동화 스크립트)
 > eBPF 컴파일/attach → TC qdisc → K8s 배포 → 실험 실행 → 결과 회수 → 정리/상태를
 > 하나의 진입점으로 묶는다.

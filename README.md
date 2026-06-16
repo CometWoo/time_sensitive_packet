@@ -444,26 +444,22 @@ python3 compare_results.py
 ├── step4-cilium/                        # (참고) Cilium CNI 설치
 ├── step5-tc-qdisc/                      # (참고) TC qdisc 옵션 스크립트
 │
-├── step6-ebpf/                          # eBPF 프로그램
+├── step6-ebpf/                          # eBPF 프로그램 (단일 프로그램 설계)
 │   ├── src/
-│   │   ├── common.h
-│   │   ├── veth_filter.c                # 컨테이너 veth 패킷 분류
-│   │   ├── egress.c                     # 물리 NIC egress 로깅
-│   │   └── ingress.c                    # 물리 NIC ingress 로깅
-│   │   # (xdp_vlan_avtp.c 는 2026-06 감사에서 제거 — dead code, 아래 "코드 감사" 절 참조)
-│   ├── stub-headers/                    # 커널 헤더 의존성 제거용 스텁
-│   ├── Makefile
-│   └── build/*.bpf.o                    # 사전 컴파일된 오브젝트 (커밋됨)
+│   │   └── vnic_filter.c                # Pod eth0 egress 분류기 (TS 판별 + priority 6 + pkt_count)
+│   ├── attach-vnic.sh                   # Pod netns 내부 eth0 egress 에 nsenter attach
+│   ├── Makefile                         # 실제 커널/libbpf 헤더로 빌드
+│   └── build/vnic_filter.bpf.o          # (VM에서 make 로 생성)
 │
 ├── step7-experiment/
-│   ├── talker/talker.py                 # UDP 패킷 송신 (1ms 간격, SO_PRIORITY=3)
-│   ├── listener/listener.py             # 수신 + latency/jitter 측정
+│   ├── talker/talker.py                 # UDP 송신 (1ms 간격, 포트 6000, SO_PRIORITY=6, --start-delay)
+│   ├── listener/listener.py             # 수신 + latency/jitter 측정 (포트 6000)
 │   └── k8s/
 │       ├── namespace.yaml
-│       ├── listener-deployment.yaml     # 워커 노드에 배치
-│       ├── talker-job.yaml              # 마스터 노드에 배치
+│       ├── listener-deployment.yaml     # 워커 노드에 배치 (포트 6000)
+│       ├── talker-job.yaml              # 마스터 노드에 배치 (포트 6000, priority 6)
 │       ├── stress-daemonset.yaml        # CPU 부하 생성
-│       └── test-master.yaml             # eBPF attach 대상 더미 pod
+│       └── test-master.yaml             # (참고) 더미 pod
 │
 └── step8-measurement/
     ├── plot-results.py                  # Figure 2~6 생성 ★
@@ -584,35 +580,37 @@ python3 compare_results.py
 
 ---
 
-## 아키텍처 (논문 Fig.1 구현)
+## 아키텍처 (단일 프로그램 설계)
 
 ```
-[Host-s (sender)]                              [Host-r (receiver)]
-  ┌─ Talker pod ─┐                              ┌─ Listener pod ─┐
-  │  SO_PRIORITY=3              ┌── UDP:5000 ──┤                │
-  │  (skb->priority)│                          │                │
-  └────┬───────────┘                           └────────┬───────┘
-       │ veth                                          │ veth
-  ┌────▼─── lxc<hash> on host ────┐         ┌──────────▼ lxc<hash> ─┐
-  │ tcx/ingress: cil_from_container│         │ tcx/ingress: cil_from│
-  │ clsact/ingress: veth_filter.bpf│         │ clsact: veth_filter  │
-  └────┬───────────────────────────┘         └────────┬─────────────┘
-       │ (Cilium native routing — bpf_redirect)        │
-  ┌────▼ enp0s3 (egress) ─────────┐         ┌────────▼ enp0s3 (ingress)
-  │ clsact/egress: egress.bpf.o   │         │ ingress.bpf.o (수신측만)│
-  │ qdisc: prio (proposed)         │         │                       │
-  │   - band 0: priority=3 (TSN)   │         │                       │
-  │   - band 1: priority=2         │         │                       │
-  │   - band 2: priority=0,1       │         │                       │
-  └────────────────────────────────┘         └───────────────────────┘
+[Host-s = master]                                      [Host-r = worker01]
+  ┌─ talker pod ───────────────┐                       ┌─ listener pod ─┐
+  │ talker.py                   │                       │ listener.py    │
+  │  SO_PRIORITY=6              │── UDP:6000 ──────────▶│  (port 6000)   │
+  │ ┌─ eth0 (pod 내부) ──────┐ │                       └────────┬───────┘
+  │ │ clsact/egress:         │ │                                │
+  │ │ vnic_filter.bpf.o ◀────┼─┼── nsenter attach (attach-vnic.sh)
+  │ │  - TS 판별(AVTP/PCP≥5/  │ │   * Cilium tcx 가 손대기 전 지점 → pkt_count 확실히 찍힘
+  │ │    UDP:6000)            │ │
+  │ │  - skb->priority = 6    │ │
+  │ │  - pkt_count[0/1]++     │ │
+  │ └────────┬───────────────┘ │
+  └──────────┼─────────────────┘
+             │ veth → lxc<hash> → Cilium tcx → bpf_redirect
+  ┌──────────▼ enp0s3 (egress) ─────────┐
+  │ qdisc: prio (proposed)               │
+  │   기본 priomap: priority 6 → band 0  │  ← TS 패킷이 먼저 dequeue
+  │ qdisc: fq_codel (baseline)           │  ← 우선순위 밴드 없음 (대조군)
+  └──────────────────────────────────────┘
 ```
 
 ### 핵심 메커니즘
-1. **Talker가 socket option `SO_PRIORITY=3` 설정** → 모든 송신 패킷의 `skb->priority=3`
-2. **prio qdisc**가 `priomap[3]=0`에 따라 band 0(최고 우선)으로 enqueue
-3. 마스터 CPU 부하가 높아도 band 0이 먼저 dequeue → latency 변동 축소
+1. **talker가 `SO_PRIORITY=6` 설정** → 송신 패킷 `skb->priority=6`. **vnic_filter** 도 Pod eth0 egress 에서 TS 패킷에 priority 6 을 (재)설정하고 `pkt_count` 를 증가시킨다.
+2. **proposed = `prio` qdisc**: 리눅스 기본 priomap 이 priority 6,7 → band 0(최우선) 이므로, 커스텀 priomap 없이 TS 패킷이 band 0 으로 우선 enqueue/dequeue 된다.
+3. **baseline = `fq_codel`**: 우선순위 밴드가 없어 TS/일반 패킷이 동등 → 깨끗한 대조군.
+4. CPU 부하가 높아도 proposed 는 band 0 이 먼저 dequeue → latency/jitter 변동 축소.
 
-> eBPF 프로그램은 명시적인 SO_PRIORITY가 없는 패킷에서 헤더 검사(UDP 포트, VLAN PCP, AVTP)로 우선순위를 부여하는 보강 역할. Cilium native routing 환경에서는 tcx 우회로 인해 우리 clsact 후크가 호출되지 않을 수 있지만, **Talker가 직접 SO_PRIORITY를 설정하므로 본 실험에선 무관**.
+> **왜 Pod eth0 egress 에 붙이나**: kernel ≥6.6 + Cilium 에서는 호스트측 veth 의 tcx(`cil_from_container`)가 legacy clsact 보다 먼저 실행되어 카운터가 0이 됐다(이전 설계의 한계). Pod 의 eth0 egress 는 Cilium 이 손대기 전이라 **vnic_filter 가 확실히 실행되고 pkt_count 가 찍힌다.** `attach-vnic.sh` 가 `nsenter` 로 Pod netns 에 들어가 attach 한다.
 
 ---
 
@@ -631,7 +629,29 @@ python3 compare_results.py
 
 ---
 
-## 코드 감사 (2026-06) — 논문 충실도 및 정합성 점검
+## 코드 감사 (2026-06)
+
+### ★ 최종 재설계 — 단일 프로그램(vnic_filter)
+
+아래 "3-프로그램(vef/eg/ig)" 감사 내용은 이후 **단일 프로그램 설계로 전면 교체**되었습니다. 현재 구조:
+
+- **eBPF 1개**: `step6-ebpf/src/vnic_filter.c` — Pod eth0 **egress(netns 내부)** 에 attach.
+  TS 패킷 판별(AVTP / VLAN PCP≥5 / UDP:6000) → `skb->priority=6` → `pkt_count`(key0=일반, key1=TS) 증가.
+- **attach**: `step6-ebpf/attach-vnic.sh` 가 `crictl`+`nsenter` 로 talker Pod netns 의 eth0 egress 에 붙인다.
+  → Cilium tcx 우회 문제가 사라져 **pkt_count 가 확실히 찍힌다** (이전 설계의 pkt_stats=0 근본 해결).
+- **qdisc**: proposed=`prio`(기본 priomap, priority 6→band 0), baseline=`fq_codel`(밴드 없음, 대조군).
+- **헤더**: 실제 커널/libbpf 헤더(`stub-headers` 제거). 빌드 의존: `clang make libbpf-dev linux-libc-dev`.
+- **포트/우선순위**: UDP **6000**, **priority 6** (talker SO_PRIORITY=6 + vnic_filter).
+- 제거됨: vef/eg/ig 3개 프로그램, common.h, debug_level/pkt_stats/debug_stats/ringbuf, XDP, host-side/tcx attach 로직.
+- ⚠️ 실행 순서가 바뀜: `build-ebpf` → `deploy-k8s` → `run proposed <cpu>`(talker Pod 에 자동 attach) → `cleanup`.
+  pkt_count 라이브 확인: `sudo bash step6-ebpf/attach-vnic.sh show tsn-experiment <talker-pod>`.
+- ⚠️ Windows 정적 분석 기반 — VM에서 `make -C step6-ebpf` + `bash verify-experiment.sh` 로 검증 필요.
+
+아래는 그 이전(3-프로그램) 감사 기록입니다.
+
+---
+
+### (이전 기록) 논문 충실도 및 정합성 점검
 
 7개 항목을 코드 라인 기준으로 점검하고 일부를 수정했습니다.
 

@@ -37,13 +37,14 @@ data:
     def main():
         parser = argparse.ArgumentParser(description="TSN Talker — UDP 패킷 전송기")
         parser.add_argument("--target", required=True)
-        parser.add_argument("--port", type=int, default=5000)
+        parser.add_argument("--port", type=int, default=6000)
         parser.add_argument("--interval", type=float, default=1.0)
         parser.add_argument("--count", type=int, default=10000)
         parser.add_argument("--size", type=int, default=128)
         parser.add_argument("--cpu", type=int, default=-1)
         parser.add_argument("--realtime", action="store_true")
         parser.add_argument("--vlan-priority", type=int, default=-1)
+        parser.add_argument("--start-delay", type=float, default=0.0)
         parser.add_argument("--log", default="")
         args = parser.parse_args()
 
@@ -72,6 +73,9 @@ data:
         print(f"Talker 시작: {args.target}:{args.port}")
         print(f"  간격: {args.interval}ms, 패킷 수: {args.count}, 크기: {args.size}B")
         print(f"  예상 소요시간: {args.count * interval_s:.1f}s")
+        if args.start_delay > 0:
+            print(f"  송신 전 대기: {args.start_delay}s (eBPF attach 시간 확보)")
+            time.sleep(args.start_delay)
         print("-" * 50)
 
         sent = 0
@@ -152,13 +156,14 @@ spec:
           command: ["python3", "/app/talker.py"]
           args:
             - "--target=listener-svc.tsn-experiment.svc.cluster.local"
-            - "--port=5000"
+            - "--port=6000"         # vnic_filter TS_UDP_PORT
             - "--interval=1"
             - "--count=10000"
             - "--size=128"
             - "--cpu=2"             # isolcpus=2,3 으로 격리한 코어에 talker 고정 (스케줄링 jitter 제거)
+            - "--start-delay=8"     # Pod eth0에 vnic_filter attach할 시간 확보
             - "--log=/data/talker-log.csv"
-            - "--vlan-priority=3"   # SO_PRIORITY=3 → prio qdisc band 0 (TSN)
+            - "--vlan-priority=6"   # SO_PRIORITY=6 → prio 기본 priomap → band 0 (TSN)
           volumeMounts:
             - name: script
               mountPath: /app

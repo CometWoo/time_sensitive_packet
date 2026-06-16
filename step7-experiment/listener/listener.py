@@ -8,7 +8,7 @@
     여기서 t_i는 i번째 패킷 수신 시각, T는 전송 간격 (1ms)
 
 사용법:
-  python3 listener.py --port 5000 --interval 1 --output results.csv
+  python3 listener.py --port 6000 --interval 1 --output results.csv
 """
 import argparse
 import socket
@@ -32,7 +32,7 @@ def set_cpu_affinity(cpu_id):
 
 def main():
     parser = argparse.ArgumentParser(description="TSN Listener — UDP 수신 및 측정")
-    parser.add_argument("--port", type=int, default=5000, help="수신 포트 (기본: 5000)")
+    parser.add_argument("--port", type=int, default=6000, help="수신 포트 (기본: 6000)")
     parser.add_argument("--interval", type=float, default=1.0,
                         help="예상 전송 간격 (ms, jitter 계산용)")
     parser.add_argument("--timeout", type=float, default=30.0,

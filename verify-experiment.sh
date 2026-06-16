@@ -33,13 +33,21 @@ else
 fi
 echo ""
 
-# ── 2. eBPF Attach 상태 ──
-echo "[2] eBPF 프로그램 부착 상태 (enp0s3)"
-TC_EGRESS=$(sudo tc filter show dev enp0s3 egress 2>/dev/null | grep -c egress.bpf.o || true)
-if [ "$TC_EGRESS" -gt 0 ]; then ok "egress.bpf.o 부착됨"; else warn "egress.bpf.o 미부착"; fi
-# (XDP 점검 제거됨 2026-06: XDP VLAN/AVTP 프로그램은 dead code라 삭제됨)
-VETH_COUNT=$(sudo bpftool net show 2>/dev/null | grep -c "veth_filter.bpf.o" || true)
-ok "veth_filter 부착된 인터페이스: ${VETH_COUNT}개"
+# ── 2. eBPF 빌드/부착 상태 (단일 프로그램 vnic_filter) ──
+echo "[2] vnic_filter 빌드/부착 상태"
+if [ -f "$SCRIPT_DIR/step6-ebpf/build/vnic_filter.bpf.o" ]; then
+    ok "vnic_filter.bpf.o 빌드됨"
+else
+    warn "vnic_filter.bpf.o 없음 — make -C step6-ebpf"
+fi
+# vnic_filter 는 talker Pod eth0 egress(netns 내부)에 붙으므로 호스트에서는 안 보인다.
+TP=$(kubectl -n tsn-experiment get pod -l job-name=talker-run -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+if [ -n "$TP" ]; then
+    echo "  talker Pod=$TP — 송신 중이면 카운터 확인:"
+    echo "    sudo bash step6-ebpf/attach-vnic.sh show tsn-experiment $TP"
+else
+    echo "  (talker Pod 없음 — 실험 실행 중이 아님. vnic_filter 는 Pod eth0 에 붙음)"
+fi
 echo ""
 
 # ── 3. TC Qdisc 상태 ──
@@ -89,30 +97,13 @@ if [ "$MODE" != "quick" ]; then
     echo ""
 fi
 
-# ── 7. eBPF 통계 카운터 ──
-echo "[7] eBPF 패킷 통계 (pkt_stats)"
-if command -v bpftool >/dev/null; then
-    sudo bpftool map dump name pkt_stats 2>/dev/null > /tmp/pkt_stats.json
-    python3 - <<EOF
-import json
-try:
-    with open("/tmp/pkt_stats.json") as f:
-        data = json.load(f)
-    any_nonzero = False
-    for m in data:
-        vals = {e["key"]: e["value"] for e in m["elements"]}
-        if any(vals.values()):
-            any_nonzero = True
-            print(f"  map_id={m['id']}: TOTAL={vals.get(0,0)} TSN={vals.get(1,0)} BEST_EFF={vals.get(2,0)} DROP={vals.get(3,0)}")
-    if not any_nonzero:
-        print("  (모든 카운터 0 — Cilium native routing 모드에서는 정상)")
-        print("  실험 검증은 latency/jitter CSV로 합니다 (Phase 4 결과)")
-except FileNotFoundError:
-    print("  (pkt_stats 맵 없음 — eBPF 미부착 상태)")
-EOF
-else
-    warn "bpftool 없음"
-fi
+# ── 7. eBPF 카운터 (vnic_filter pkt_count) ──
+echo "[7] eBPF 카운터 (vnic_filter pkt_count, talker Pod netns 내부)"
+echo "  pkt_count 는 호스트가 아니라 talker Pod eth0 의 netns 안에 있다."
+echo "  talker 송신 중에만 읽을 수 있다:"
+echo "    TP=\$(kubectl -n tsn-experiment get pod -l job-name=talker-run -o jsonpath='{.items[0].metadata.name}')"
+echo "    sudo bash $SCRIPT_DIR/step6-ebpf/attach-vnic.sh show tsn-experiment \$TP"
+echo "  (실험 검증의 본체는 latency/jitter CSV — [5] 통계 비교. 카운터는 보조 지표)"
 
 echo ""
 echo "================================================================"

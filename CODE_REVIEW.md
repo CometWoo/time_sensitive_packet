@@ -1,5 +1,18 @@
 # CODE_REVIEW.md — 논문 「A Time-Sensitive Cloud-Native Network Based on eBPF」(Wen et al., CSCWD 2024) 재현 코드 정밀 리뷰
 
+> ⚠️ **이 문서는 이전(3-프로그램 vef/eg/ig) 설계 기준입니다.** 이후 코드는 **단일 프로그램
+> 설계로 전면 교체**되었습니다(2026-06). 현재 구조 요약:
+> - eBPF 1개: `step6-ebpf/src/vnic_filter.c` — talker **Pod eth0 egress(netns)** 에 attach
+>   (`attach-vnic.sh`, `nsenter`). TS 판별(AVTP/PCP≥5/UDP:6000) → `skb->priority=6` → `pkt_count`.
+> - qdisc: proposed=`prio`(기본 priomap, priority 6→band 0), baseline=`fq_codel`.
+> - 포트 **6000**, priority **6**. 실제 커널/libbpf 헤더. 수신측 측정은 `listener.py` 단독.
+> - 제거됨: vef/eg/ig, common.h, XDP, debug_level/pkt_stats/debug_stats/ringbuf, host-side/tcx attach.
+> - 최신 코드 설명은 `explain_01_bpf_egress.md`(vnic_filter) 및 README "코드 감사 > 최종 재설계" 절 참조.
+> 아래 §1~§21 은 그 이전 설계에 대한 상세 기록으로 보존합니다.
+
+---
+
+
 > 본 문서는 본 repo에 있는 모든 코드 (eBPF C, 유저스페이스 Python, TC/qdisc 설정 셸, K8s/Cilium YAML, 시각화 스크립트 등) 를 위 논문의 본문/그림/표와 1:1로 매핑하여, 각 코드 블록이 "무엇을 하는지", "논문의 어디에 대응하는지", "왜 필요한지", "누가/언제 실행하는지", "어떤 대안이 있었고 왜 이걸 골랐는지", "VM 환경에서의 한계는 무엇인지" 를 모두 다룹니다. eBPF 프로그램은 추가로 attach 훅 / 커널 스택 경로 / 액션 / BPF map 사용 / 패킷 분류 기준을 별도로 분석하고, 마지막에 End-to-End 패킷 경로 다이어그램을 둡니다.
 
 ---
