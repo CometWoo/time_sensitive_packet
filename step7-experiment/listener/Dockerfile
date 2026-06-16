@@ -10,4 +10,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ENTRYPOINT ["python3", "listener.py"]
-CMD ["--port", "5000", "--interval", "1", "--timeout", "30", "--output", "/data/results.csv"]
+CMD ["--port", "6000", "--interval", "1", "--timeout", "30", "--output", "/data/results.csv"]

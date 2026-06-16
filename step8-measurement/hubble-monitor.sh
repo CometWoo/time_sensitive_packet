@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# hubble-monitor.sh — Cilium Hubble 로 실험 트래픽(UDP 5000) 흐름 관찰
+# hubble-monitor.sh — Cilium Hubble 로 실험 트래픽(UDP 6000) 흐름 관찰
 #
 # ⚠️ 현재 상태 (2026-06 감사):
 #   step4-cilium/01-install-cilium.sh 의 helm 설치에는 hubble 옵션이 없다.
@@ -8,21 +8,21 @@
 #
 # ⚠️ 한계 (정직한 보고):
 #   Hubble 은 L3/L4 흐름(누가→누구, 포트, verdict)만 본다. 본 실험의 핵심인
-#   skb->priority(SO_PRIORITY=3) 나 TC band/qdisc 는 Hubble 로 볼 수 없다.
+#   skb->priority(SO_PRIORITY=6) 나 TC band/qdisc 는 Hubble 로 볼 수 없다.
 #   따라서 Hubble 은 "패킷이 흐르는지/드롭되는지/어느 pod 간인지" 확인용이며,
-#   우선순위 큐 효과(latency/jitter)는 여전히 listener.py + pkt_stats 로 측정한다.
+#   우선순위 큐 효과(latency/jitter)는 여전히 listener.py + pkt_count 로 측정한다.
 #
 # 사용법:
 #   bash hubble-monitor.sh enable      # Hubble + relay + UI 활성화 (1회)
 #   bash hubble-monitor.sh status      # Hubble 상태
-#   bash hubble-monitor.sh watch       # 실험 트래픽(UDP 5000) 실시간 관찰
+#   bash hubble-monitor.sh watch       # 실험 트래픽(UDP 6000) 실시간 관찰
 #   bash hubble-monitor.sh start <out> # 백그라운드 캡처 시작 → <out> 파일
 #   bash hubble-monitor.sh stop        # 백그라운드 캡처 종료
 # =============================================================================
 set -euo pipefail
 
 NS="tsn-experiment"
-PORT="${PORT:-5000}"
+PORT="${PORT:-6000}"
 PIDFILE="/tmp/hubble-monitor.pid"
 
 enable_hubble() {

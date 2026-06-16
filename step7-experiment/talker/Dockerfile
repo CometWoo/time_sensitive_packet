@@ -11,4 +11,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ENTRYPOINT ["python3", "talker.py"]
-CMD ["--target", "listener-svc", "--port", "5000", "--interval", "1", "--count", "10000"]
+CMD ["--target", "listener-svc", "--port", "6000", "--interval", "1", "--count", "10000"]

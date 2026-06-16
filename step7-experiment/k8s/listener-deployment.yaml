@@ -27,7 +27,7 @@ data:
 
     def main():
         parser = argparse.ArgumentParser(description="TSN Listener — UDP 수신 및 측정")
-        parser.add_argument("--port", type=int, default=5000)
+        parser.add_argument("--port", type=int, default=6000)
         parser.add_argument("--interval", type=float, default=1.0)
         parser.add_argument("--timeout", type=float, default=30.0)
         parser.add_argument("--output", default="results.csv")
@@ -156,8 +156,8 @@ spec:
     app: listener
   ports:
     - protocol: UDP
-      port: 5000
-      targetPort: 5000
+      port: 6000
+      targetPort: 6000
   clusterIP: None
 ---
 apiVersion: apps/v1
@@ -187,13 +187,13 @@ spec:
           image: python:3.11-slim
           command: ["python3", "/app/listener.py"]
           args:
-            - "--port=5000"
+            - "--port=6000"
             - "--interval=1"
             - "--timeout=60"
             - "--cpu=2"            # isolcpus=2,3 으로 격리한 코어에 listener 고정 (수신 jitter 제거)
             - "--output=/data/results.csv"
           ports:
-            - containerPort: 5000
+            - containerPort: 6000
               protocol: UDP
           volumeMounts:
             - name: script
