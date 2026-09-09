@@ -1,0 +1,88 @@
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint (shellcheck / ruff / kubeconform)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          git ls-files '*.sh' | xargs shellcheck -S warning -x
+      - name: ruff
+        run: |
+          python -m pip install -q ruff
+          ruff check .
+      - name: kubeconform (K8s manifests)
+        run: |
+          curl -sSfL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
+            | sudo tar xz -C /usr/local/bin kubeconform
+          if [ -f step7-experiment/k8s/kustomization.yaml ]; then
+            kubectl kustomize step7-experiment/k8s | kubeconform -strict -summary -
+          else
+            kubeconform -strict -summary step7-experiment/k8s/*.yaml
+          fi
+
+  bpf:
+    name: eBPF build + BPF_PROG_TEST_RUN + tcx chain
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang llvm make gcc pkg-config libbpf-dev linux-libc-dev python3-pytest iproute2
+          bash ci/install-bpftool.sh
+          uname -r; clang --version | head -1; pkg-config --modversion libbpf
+      - name: build
+        run: |
+          make -C step6-ebpf
+          make -C step6-ebpf tools
+          make -C step6-ebpf verify
+      - name: unit tests (bpftool prog run)
+        run: sudo -E env "PATH=$PATH" make -C step6-ebpf test
+      - name: tcx chain integration test (kernel >= 6.6)
+        run: sudo -E env "PATH=$PATH" make -C step6-ebpf test-tcx
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bpf-objects
+          path: |
+            step6-ebpf/build/*.bpf.o
+            step6-ebpf/build/tcx_attach
+
+  analysis:
+    name: analysis package tests + report on committed results
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install
+        run: python -m pip install -q -e "analysis[dev]"
+      - name: pytest
+        run: cd analysis && python -m pytest -q
+      - name: regenerate report + figures for the K8s results (May 2026)
+        run: |
+          mkdir -p out/k8s-may2026
+          tsn-analysis summary step8-measurement/results --normalize-skew --baseline baseline \
+            --markdown out/k8s-may2026/summary.md --json out/k8s-may2026/summary.json
+          tsn-analysis plot step8-measurement/results --normalize-skew --out out/k8s-may2026
+          cat out/k8s-may2026/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: analysis-report
+          path: out/

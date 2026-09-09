@@ -1,153 +1,128 @@
 #!/usr/bin/env python3
-"""talker.py — 1ms 간격 UDP 패킷 전송기
+"""talker.py — 고정 간격(기본 1 ms) UDP 패킷 전송기
 
-논문 실험 구성:
-  - 1ms 간격으로 UDP 패킷 전송
-  - 각 패킷에 시퀀스 번호와 전송 타임스탬프 포함
-  - listener가 수신하여 latency/jitter 측정
+각 패킷 헤더에 [seq(u32)][send_time_ns(u64)] 를 실어 보내고, listener 가
+latency / jitter 를 계산한다.
+
+주의 — 목적지 이름 해석:
+  socket.sendto() 에 호스트 이름을 넘기면 파이썬은 **매 호출마다 getaddrinfo()** 를
+  수행한다. K8s 안에서 Service 이름을 그대로 쓰면 패킷마다 CoreDNS 왕복이
+  send_time_ns 스탬프 이후에 끼어들어 latency 측정에 섞인다. 그래서 시작 시
+  한 번만 해석한 IP 로 보낸다 (docs/adr/0008-talker-resolve-once.md).
 
 사용법:
-  python3 talker.py --target <listener_ip> --port 6000 --interval 1 --count 10000
+  python3 talker.py --target <ip|name> --port 6000 --interval 1 --count 10000 [--so-priority 6] [--tos 0xb8]
 """
 import argparse
+import os
 import socket
 import struct
 import time
-import sys
-import os
 
-# 패킷 형식: [seq_num(4B)][send_time_ns(8B)][padding]
-PKT_HEADER_FMT = "!IQ"  # network byte order: uint32 + uint64
+PKT_HEADER_FMT = "!IQ"
 PKT_HEADER_SIZE = struct.calcsize(PKT_HEADER_FMT)
 
 
 def set_cpu_affinity(cpu_id):
-    """프로세스를 특정 CPU에 바인딩 (isolcpus와 함께 사용)"""
     try:
         os.sched_setaffinity(0, {cpu_id})
-        print(f"CPU affinity 설정: CPU {cpu_id}")
-    except Exception as e:
+        print(f"CPU affinity: CPU {cpu_id}")
+    except Exception as e:  # noqa: BLE001
         print(f"CPU affinity 설정 실패: {e} (무시하고 계속)")
 
 
 def set_realtime_priority(priority=50):
-    """실시간 스케줄링 우선순위 설정 (SCHED_FIFO)"""
     try:
-        param = os.sched_param(priority)
-        os.sched_setscheduler(0, os.SCHED_FIFO, param)
-        print(f"RT 스케줄러 설정: SCHED_FIFO, priority={priority}")
+        os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(priority))
+        print(f"RT 스케줄러: SCHED_FIFO priority={priority}")
     except PermissionError:
-        print("RT 스케줄러 설정 실패: root 권한 필요 (무시하고 계속)")
-    except Exception as e:
+        print("RT 스케줄러 설정 실패: CAP_SYS_NICE 필요 (무시하고 계속)")
+    except Exception as e:  # noqa: BLE001
         print(f"RT 스케줄러 설정 실패: {e}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="TSN Talker — UDP 패킷 전송기")
-    parser.add_argument("--target", required=True, help="Listener IP 주소")
-    parser.add_argument("--port", type=int, default=6000, help="대상 포트 (기본: 6000 = vnic_filter TS_UDP_PORT)")
-    parser.add_argument("--interval", type=float, default=1.0,
-                        help="전송 간격 (ms, 기본: 1.0)")
-    parser.add_argument("--count", type=int, default=10000,
-                        help="전송 패킷 수 (기본: 10000)")
-    parser.add_argument("--size", type=int, default=128,
-                        help="패킷 크기 (bytes, 기본: 128)")
-    parser.add_argument("--cpu", type=int, default=-1,
-                        help="CPU affinity (기본: -1 = 미설정)")
-    parser.add_argument("--realtime", action="store_true",
-                        help="SCHED_FIFO 실시간 스케줄링 사용")
-    parser.add_argument("--vlan-priority", type=int, default=-1,
-                        help="SO_PRIORITY 설정 (VLAN PCP 매핑)")
-    parser.add_argument("--start-delay", type=float, default=0.0,
-                        help="송신 시작 전 대기(초). Pod eth0에 eBPF를 attach할 시간 확보용")
-    parser.add_argument("--log", default="",
-                        help="전송 로그 파일 경로 (CSV)")
+    parser.add_argument("--target", required=True, help="Listener IP 또는 호스트 이름 (시작 시 1회 해석)")
+    parser.add_argument("--port", type=int, default=6000, help="목적지 UDP 포트 (기본 6000 = TS 포트)")
+    parser.add_argument("--interval", type=float, default=1.0, help="송신 간격 (ms)")
+    parser.add_argument("--count", type=int, default=10000, help="송신 패킷 수")
+    parser.add_argument("--size", type=int, default=128, help="패킷 크기 (bytes, 헤더 12B 포함)")
+    parser.add_argument("--cpu", type=int, default=-1, help="CPU affinity (기본 미설정)")
+    parser.add_argument("--realtime", action="store_true", help="SCHED_FIFO 사용")
+    parser.add_argument("--so-priority", "--vlan-priority", dest="so_priority", type=int, default=-1,
+                        help="SO_PRIORITY 값 (skb->priority). 0..6 은 권한 불필요. "
+                             "※ veth 를 건너면 0 으로 리셋됨 (호스트 qdisc 에는 전달되지 않음)")
+    parser.add_argument("--tos", type=lambda v: int(v, 0), default=-1,
+                        help="IP_TOS 값 (예: 0xb8 = DSCP EF). 애플리케이션이 직접 DSCP 를 찍을 때")
+    parser.add_argument("--start-delay", type=float, default=0.0, help="송신 시작 전 대기(초)")
+    parser.add_argument("--log", default="", help="송신 드리프트 로그 CSV 경로")
+    parser.add_argument("--quiet", action="store_true", help="진행 로그 생략")
     args = parser.parse_args()
 
     interval_s = args.interval / 1000.0
-    payload_size = max(args.size - PKT_HEADER_SIZE, 0)
-    padding = b'\x00' * payload_size
+    padding = b"\x00" * max(args.size - PKT_HEADER_SIZE, 0)
 
-    # CPU affinity 및 RT 스케줄링
     if args.cpu >= 0:
         set_cpu_affinity(args.cpu)
     if args.realtime:
         set_realtime_priority()
 
-    # 소켓 생성
+    # 이름 해석은 딱 한 번
+    target_ip = socket.getaddrinfo(args.target, args.port, socket.AF_INET, socket.SOCK_DGRAM)[0][4][0]
+    target = (target_ip, args.port)
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    if args.so_priority >= 0:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_PRIORITY, args.so_priority)
+        print(f"SO_PRIORITY={args.so_priority}")
+    if args.tos >= 0:
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, args.tos)
+        print(f"IP_TOS=0x{args.tos:02x} (DSCP {args.tos >> 2})")
 
-    # VLAN 우선순위 설정 (SO_PRIORITY → skb->priority → mqprio TC 매핑)
-    if args.vlan_priority >= 0:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_PRIORITY, args.vlan_priority)
-        print(f"SO_PRIORITY 설정: {args.vlan_priority}")
-
-    target = (args.target, args.port)
     log_file = None
     if args.log:
+        os.makedirs(os.path.dirname(args.log) or ".", exist_ok=True)
         log_file = open(args.log, "w")
-        log_file.write("seq,send_time_ns,scheduled_time_ns,actual_send_ns,drift_us\n")
+        log_file.write("seq,send_time_ns,scheduled_time_ns,drift_us\n")
 
-    print(f"Talker 시작: {args.target}:{args.port}")
-    print(f"  간격: {args.interval}ms, 패킷 수: {args.count}, 크기: {args.size}B")
-    print(f"  예상 소요시간: {args.count * interval_s:.1f}s")
-
-    # Pod eth0에 vnic_filter eBPF를 attach할 시간을 확보 (호스트 측 nsenter attach 대기)
+    print(f"Talker: {args.target} -> {target_ip}:{args.port}, interval={args.interval}ms, "
+          f"count={args.count}, size={args.size}B, 예상 {args.count * interval_s:.1f}s")
     if args.start_delay > 0:
-        print(f"  송신 전 대기: {args.start_delay}s (eBPF attach 시간 확보)")
         time.sleep(args.start_delay)
-    print("-" * 50)
 
-    sent = 0
-    errors = 0
+    sent = errors = 0
     start_time = time.time_ns()
-
     try:
         for seq in range(args.count):
             scheduled_ns = start_time + int(seq * interval_s * 1e9)
-
-            # 정확한 간격 대기 (busy-wait for precision)
             now = time.time_ns()
             while now < scheduled_ns:
-                if scheduled_ns - now > 500_000:  # 0.5ms 이상 남으면 sleep
-                    time.sleep((scheduled_ns - now - 200_000) / 1e9)
-                now = time.time_ns()
+                if scheduled_ns - now > 500_000:
+                    time.sleep((scheduled_ns - now - 200_000) / 1e9)   # 0.5 ms 이상 남으면 sleep
+                now = time.time_ns()                                   # 마지막 ~200 us 는 busy-wait
 
             send_time_ns = time.time_ns()
-            header = struct.pack(PKT_HEADER_FMT, seq, send_time_ns)
-            pkt = header + padding
-
             try:
-                sock.sendto(pkt, target)
+                sock.sendto(struct.pack(PKT_HEADER_FMT, seq, send_time_ns) + padding, target)
                 sent += 1
-            except Exception as e:
+            except OSError as e:
                 errors += 1
                 if errors <= 5:
                     print(f"전송 오류 #{seq}: {e}")
 
             if log_file:
-                drift_us = (send_time_ns - scheduled_ns) / 1000.0
-                log_file.write(f"{seq},{send_time_ns},{scheduled_ns},{send_time_ns},{drift_us:.2f}\n")
-
-            # 진행 상황
-            if (seq + 1) % 1000 == 0:
+                log_file.write(f"{seq},{send_time_ns},{scheduled_ns},{(send_time_ns - scheduled_ns) / 1000.0:.2f}\n")
+            if not args.quiet and (seq + 1) % 1000 == 0:
                 elapsed = (time.time_ns() - start_time) / 1e9
-                rate = (seq + 1) / elapsed
-                print(f"  진행: {seq+1}/{args.count} ({rate:.0f} pkt/s)")
-
+                print(f"  진행: {seq + 1}/{args.count} ({(seq + 1) / elapsed:.0f} pkt/s)")
     except KeyboardInterrupt:
-        print("\n중단됨")
+        print("중단됨")
 
-    elapsed = (time.time_ns() - start_time) / 1e9
-    print("-" * 50)
-    print(f"전송 완료: {sent}/{args.count} (오류: {errors})")
-    print(f"소요 시간: {elapsed:.2f}s")
-    print(f"평균 전송률: {sent/elapsed:.1f} pkt/s")
-
+    elapsed = max((time.time_ns() - start_time) / 1e9, 1e-9)
+    print(f"전송 완료: {sent}/{args.count} (오류 {errors}), {elapsed:.2f}s, {sent / elapsed:.1f} pkt/s")
     if log_file:
         log_file.close()
-        print(f"로그 저장: {args.log}")
-
     sock.close()
 
 

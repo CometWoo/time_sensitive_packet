@@ -1,0 +1,7 @@
+line-length = 120
+target-version = "py311"
+extend-exclude = ["step8-measurement/figures", "notes"]
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]

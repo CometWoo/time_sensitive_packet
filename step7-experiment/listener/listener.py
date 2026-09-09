@@ -1,61 +1,86 @@
 #!/usr/bin/env python3
-"""listener.py — UDP 패킷 수신 및 latency/jitter 측정
+"""listener.py — UDP 패킷 수신 및 latency / jitter / DSCP 측정
 
-논문 측정 지표:
-  - Bandwidth: 초당 평균 수신 데이터량 (bytes/s)
-  - Latency: 송신 타임스탬프와 수신 시각의 차이
-  - Jitter: Jitter(i) = t_i - (t_{i-1} + T)
-    여기서 t_i는 i번째 패킷 수신 시각, T는 전송 간격 (1ms)
+측정 지표 (논문 §V 와 동일한 정의):
+  - Bandwidth : 수신 바이트 / 수신 구간(초)
+  - Latency   : recv_ns - send_ns  (송신 타임스탬프는 패킷 헤더에 실려 옴)
+                ※ 서로 다른 호스트라면 두 시계의 오프셋이 포함된다 (PTP/NTP 필요).
+                   같은 호스트(netns 테스트베드)에서는 같은 시계라 절대값이 유효하다.
+  - Jitter    : Jitter(i) = t_i - (t_{i-1} + T),  T = 송신 간격
+  - TOS/DSCP  : --record-tos 일 때 IP_RECVTOS 로 수신 IP TOS 바이트 기록
+                (eBPF DSCP 마킹이 실제로 와이어에 실렸는지 end-to-end 검증)
 
 사용법:
-  python3 listener.py --port 6000 --interval 1 --output results.csv
+  python3 listener.py --port 6000 --interval 1 --output results.csv [--record-tos] [--ready-file F]
 """
 import argparse
+import csv
+import os
 import socket
 import struct
 import time
-import sys
-import os
-import csv
 
-PKT_HEADER_FMT = "!IQ"
+PKT_HEADER_FMT = "!IQ"          # [seq(u32)][send_time_ns(u64)] network byte order
 PKT_HEADER_SIZE = struct.calcsize(PKT_HEADER_FMT)
 
 
 def set_cpu_affinity(cpu_id):
     try:
         os.sched_setaffinity(0, {cpu_id})
-        print(f"CPU affinity 설정: CPU {cpu_id}")
-    except Exception as e:
-        print(f"CPU affinity 설정 실패: {e}")
+        print(f"CPU affinity: CPU {cpu_id}")
+    except Exception as e:  # noqa: BLE001 — 격리 코어가 없는 환경에서도 계속 진행
+        print(f"CPU affinity 설정 실패: {e} (무시하고 계속)")
+
+
+def recv_one(sock, record_tos):
+    """(data, tos) 반환. tos 는 --record-tos 가 아니면 None."""
+    if not record_tos:
+        data, _addr = sock.recvfrom(65535)
+        return data, None
+    data, ancdata, _flags, _addr = sock.recvmsg(65535, socket.CMSG_SPACE(4))
+    tos = -1
+    for level, ctype, cdata in ancdata:
+        if level == socket.IPPROTO_IP and ctype == socket.IP_TOS:
+            tos = cdata[0]
+    return data, tos
 
 
 def main():
     parser = argparse.ArgumentParser(description="TSN Listener — UDP 수신 및 측정")
     parser.add_argument("--port", type=int, default=6000, help="수신 포트 (기본: 6000)")
     parser.add_argument("--interval", type=float, default=1.0,
-                        help="예상 전송 간격 (ms, jitter 계산용)")
+                        help="예상 송신 간격 (ms, jitter 계산용)")
     parser.add_argument("--timeout", type=float, default=30.0,
-                        help="수신 대기 타임아웃 (초)")
-    parser.add_argument("--output", default="results.csv",
-                        help="결과 CSV 파일 (기본: results.csv)")
-    parser.add_argument("--cpu", type=int, default=-1,
-                        help="CPU affinity")
+                        help="마지막 패킷 후 이 시간(초) 동안 수신이 없으면 종료")
+    parser.add_argument("--output", default="results.csv", help="결과 CSV 경로")
+    parser.add_argument("--cpu", type=int, default=-1, help="CPU affinity (기본: 미설정)")
+    parser.add_argument("--record-tos", action="store_true",
+                        help="IP_RECVTOS 로 수신 TOS(DSCP<<2|ECN) 를 tos 컬럼에 기록 (Linux)")
+    parser.add_argument("--ready-file", default="",
+                        help="bind 완료 후 이 파일을 생성 (오케스트레이션용)")
+    parser.add_argument("--quiet", action="store_true", help="진행 로그 생략")
     args = parser.parse_args()
 
-    expected_interval_ns = int(args.interval * 1e6)  # ms → ns
+    expected_interval_ns = int(args.interval * 1e6)
 
     if args.cpu >= 0:
         set_cpu_affinity(args.cpu)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
+    if args.record_tos:
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_RECVTOS, 1)
     sock.bind(("0.0.0.0", args.port))
     sock.settimeout(args.timeout)
 
-    print(f"Listener 시작: 0.0.0.0:{args.port}")
-    print(f"  예상 간격: {args.interval}ms, 타임아웃: {args.timeout}s")
-    print("-" * 60)
+    if args.ready_file:
+        os.makedirs(os.path.dirname(args.ready_file) or ".", exist_ok=True)
+        with open(args.ready_file, "w") as f:
+            f.write(str(os.getpid()))
+
+    print(f"Listener 시작: 0.0.0.0:{args.port}  (interval={args.interval}ms, timeout={args.timeout}s, "
+          f"record_tos={args.record_tos})")
 
     results = []
     prev_recv_ns = None
@@ -65,19 +90,18 @@ def main():
     try:
         while True:
             try:
-                data, addr = sock.recvfrom(65535)
+                data, tos = recv_one(sock, args.record_tos)
             except socket.timeout:
                 if results:
-                    print(f"\n타임아웃 — 수신 완료 ({len(results)} 패킷)")
+                    print(f"타임아웃 — 수신 완료 ({len(results)} 패킷)")
                     break
-                else:
+                if not args.quiet:
                     print("대기 중... (패킷 미수신)")
-                    continue
+                continue
 
             recv_ns = time.time_ns()
             if start_time is None:
                 start_time = recv_ns
-
             if len(data) < PKT_HEADER_SIZE:
                 continue
 
@@ -85,77 +109,63 @@ def main():
             pkt_size = len(data)
             total_bytes += pkt_size
 
-            # Latency 계산 (주의: 두 VM 간 시계 오차 포함)
-            latency_ns = recv_ns - send_ns
-            latency_ms = latency_ns / 1e6
-
-            # Jitter 계산: Jitter(i) = t_i - (t_{i-1} + T)
+            latency_ms = (recv_ns - send_ns) / 1e6
             jitter_us = 0.0
             if prev_recv_ns is not None:
-                expected_recv = prev_recv_ns + expected_interval_ns
-                jitter_ns = recv_ns - expected_recv
-                jitter_us = jitter_ns / 1e3  # ns → μs
-
+                jitter_us = (recv_ns - (prev_recv_ns + expected_interval_ns)) / 1e3
             prev_recv_ns = recv_ns
 
-            results.append({
+            row = {
                 "seq": seq,
                 "send_ns": send_ns,
                 "recv_ns": recv_ns,
                 "latency_ms": latency_ms,
                 "jitter_us": jitter_us,
                 "pkt_size": pkt_size,
-            })
+            }
+            if args.record_tos:
+                row["tos"] = tos
+            results.append(row)
 
-            # 진행 상황
-            if len(results) % 1000 == 0:
+            if not args.quiet and len(results) % 1000 == 0:
                 elapsed = (recv_ns - start_time) / 1e9
                 bw = total_bytes / elapsed if elapsed > 0 else 0
-                print(f"  수신: {len(results)} pkts, "
-                      f"BW: {bw/1024:.1f} KB/s, "
-                      f"Latency: {latency_ms:.3f}ms, "
-                      f"Jitter: {jitter_us:.1f}μs")
-
+                print(f"  수신: {len(results)} pkts, BW: {bw/1024:.1f} KB/s, "
+                      f"latency: {latency_ms:.3f}ms, jitter: {jitter_us:.1f}us")
     except KeyboardInterrupt:
-        print("\n중단됨")
+        print("중단됨")
 
     sock.close()
-
     if not results:
         print("수신된 패킷 없음")
         return
 
-    # 통계 계산
-    elapsed_s = (results[-1]["recv_ns"] - results[0]["recv_ns"]) / 1e9
-    latencies = [r["latency_ms"] for r in results]
-    jitters = [abs(r["jitter_us"]) for r in results[1:]]  # 첫 패킷 jitter 제외
+    elapsed_s = max((results[-1]["recv_ns"] - results[0]["recv_ns"]) / 1e9, 1e-9)
+    latencies = sorted(r["latency_ms"] for r in results)
+    jitters = sorted(abs(r["jitter_us"]) for r in results[1:])
+    n = len(latencies)
+    expected = results[-1]["seq"] - results[0]["seq"] + 1
+    loss = expected - len(results)
 
     print("-" * 60)
-    print(f"총 수신: {len(results)} 패킷")
-    print(f"소요 시간: {elapsed_s:.2f}s")
-    print(f"Bandwidth: {total_bytes / elapsed_s / 1024:.2f} KB/s")
-    print(f"Latency (ms): min={min(latencies):.3f}, "
-          f"median={sorted(latencies)[len(latencies)//2]:.3f}, "
-          f"max={max(latencies):.3f}, "
-          f"avg={sum(latencies)/len(latencies):.3f}")
+    print(f"총 수신: {len(results)} 패킷, 구간 {elapsed_s:.2f}s, "
+          f"BW {total_bytes / elapsed_s / 1024:.1f} KB/s, 손실 {loss}/{expected} ({loss / expected * 100:.2f}%)")
+    print(f"Latency (ms): p50={latencies[n // 2]:.3f} p99={latencies[int(n * 0.99)]:.3f} max={latencies[-1]:.3f}")
     if jitters:
-        print(f"Jitter (μs): min={min(jitters):.1f}, "
-              f"median={sorted(jitters)[len(jitters)//2]:.1f}, "
-              f"max={max(jitters):.1f}, "
-              f"avg={sum(jitters)/len(jitters):.1f}")
+        m = len(jitters)
+        print(f"Jitter (us):  p50={jitters[m // 2]:.1f} p99={jitters[int(m * 0.99)]:.1f} max={jitters[-1]:.1f}")
+    if args.record_tos:
+        dist = {}
+        for r in results:
+            dist[r["tos"]] = dist.get(r["tos"], 0) + 1
+        print("TOS 분포 (tos: count): " + ", ".join(f"0x{k:02x}(dscp {k >> 2}): {v}" for k, v in sorted(dist.items())))
 
-    # 손실률
-    if results:
-        expected = results[-1]["seq"] - results[0]["seq"] + 1
-        loss = expected - len(results)
-        print(f"패킷 손실: {loss}/{expected} ({loss/expected*100:.2f}%)")
-
-    # CSV 저장
+    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
     with open(args.output, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=results[0].keys())
+        writer = csv.DictWriter(f, fieldnames=list(results[0].keys()))
         writer.writeheader()
         writer.writerows(results)
-    print(f"\n결과 저장: {args.output}")
+    print(f"결과 저장: {args.output}")
 
 
 if __name__ == "__main__":

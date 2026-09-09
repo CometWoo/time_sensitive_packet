@@ -8,8 +8,12 @@ __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
+.pytest_cache/
+.ruff_cache/
 .venv/
 venv/
+build/
+dist/
 
 # OS
 .DS_Store
@@ -21,11 +25,15 @@ master_status.txt
 worker01_status.txt
 /tmp/
 
-# eBPF intermediate build artifacts (keep final .bpf.o for distribution)
-step6-ebpf/build/*.o
-!step6-ebpf/build/*.bpf.o
-step6-ebpf/build/*.d
-step6-ebpf/build/*.ll
+# eBPF build artifacts — CI 가 빌드/검증하므로 바이너리는 커밋하지 않는다 (ADR-0009)
+step6-ebpf/build/
+
+# Testbed run artifacts (결과 CSV 는 results/ 에 명시적으로 커밋)
+testbed/runs/
+testbed/*.pid
+
+# Private notes (면접/자소서 준비 자료 — 저장소에 올리지 않음)
+notes/
 
 # Claude session / scratch dirs
 .claude/
