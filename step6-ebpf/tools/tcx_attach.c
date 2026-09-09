@@ -65,16 +65,23 @@ static int do_attach(int argc, char **argv)
 		fprintf(stderr, "open %s: %s\n", objpath, strerror(errno));
 		return 1;
 	}
-	if (bpf_object__load(obj)) {
-		fprintf(stderr, "load %s failed (verifier?): %s\n", objpath, strerror(errno));
-		return 1;
-	}
 	prog = bpf_object__next_program(obj, NULL);
 	if (!prog) {
 		fprintf(stderr, "no program in %s\n", objpath);
 		return 1;
 	}
-	bpf_program__set_expected_attach_type(prog, dir);
+	/* SEC("tc") 는 expected_attach_type 이 0 이다. bpf_program__attach_tcx() 는 이 값을
+	 * BPF_LINK_CREATE 의 attach_type 으로 그대로 쓰므로, **로드 전에** BPF_TCX_EGRESS/INGRESS
+	 * 로 바꿔 둬야 한다 (로드 후 set_* 은 -EBUSY 로 무시됨 → 커널이 EINVAL 반환). */
+	bpf_program__set_type(prog, BPF_PROG_TYPE_SCHED_CLS);
+	if (bpf_program__set_expected_attach_type(prog, dir)) {
+		fprintf(stderr, "set_expected_attach_type failed: %s\n", strerror(errno));
+		return 1;
+	}
+	if (bpf_object__load(obj)) {
+		fprintf(stderr, "load %s failed (verifier?): %s\n", objpath, strerror(errno));
+		return 1;
+	}
 
 	/* relative_fd/id = 0 + BPF_F_BEFORE → 체인 맨 앞, BPF_F_AFTER → 맨 뒤 */
 	opts.flags = before ? BPF_F_BEFORE : BPF_F_AFTER;

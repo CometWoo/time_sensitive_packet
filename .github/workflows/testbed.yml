@@ -50,6 +50,7 @@ jobs:
           FLOOD: ${{ github.event.inputs.flood_mbps || '30' }}
           COUNT: ${{ github.event.inputs.count || '10000' }}
         run: |
+          mkdir -p testbed/runs
           sudo -E env "PATH=$PATH" bash testbed/run_testbed.sh \
             --runs "$RUNS" --rate-mbps "$RATE" --flood-mbps "$FLOOD" --count "$COUNT" \
             --out testbed/runs/ci 2>&1 | tee testbed/runs/ci-log.txt

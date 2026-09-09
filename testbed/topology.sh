@@ -50,6 +50,12 @@ up() {
 
     sysctl -qw net.ipv4.ip_forward=1
     sysctl -qw net.ipv4.conf.$VS_HOST.rp_filter=0 net.ipv4.conf.$VR_HOST.rp_filter=0 2>/dev/null || true
+    # Docker 가 설치된 호스트(GitHub Actions 러너 등)는 FORWARD 정책이 DROP 이라
+    # 두 netns 사이의 라우팅이 막힌다 → 이 두 인터페이스 사이만 명시적으로 허용
+    if command -v iptables >/dev/null 2>&1; then
+        iptables -I FORWARD 1 -i $VS_HOST -o $VR_HOST -j ACCEPT 2>/dev/null || true
+        iptables -I FORWARD 1 -i $VR_HOST -o $VS_HOST -j ACCEPT 2>/dev/null || true
+    fi
     # 1500B 미만 패킷만 쓰지만, GSO/GRO 가 타이밍을 흐리지 않도록 오프로드 해제
     for dev in $VS_HOST $VR_HOST; do ethtool -K $dev tso off gso off gro off >/dev/null 2>&1 || true; done
     ip netns exec $NS_SEND ethtool -K $VS_NS tso off gso off gro off >/dev/null 2>&1 || true
@@ -60,10 +66,22 @@ up() {
     mountpoint -q /sys/fs/bpf || mount -t bpf bpf /sys/fs/bpf
     mkdir -p $BPF_PIN_DIR
     echo "topology up: $NS_SEND($SEND_IP) -> host -> $NS_RECV($RECV_IP); bottleneck dev = $VR_HOST"
-    ip netns exec $NS_SEND ping -c1 -W1 $RECV_IP >/dev/null && echo "connectivity OK" || { echo "ping 실패"; exit 1; }
+    if ip netns exec $NS_SEND ping -c2 -W2 $RECV_IP >/dev/null; then
+        echo "connectivity OK"
+    else
+        echo "ping 실패 — 진단:"
+        ip -br addr show $VS_HOST $VR_HOST
+        ip netns exec $NS_SEND ip route
+        command -v iptables >/dev/null 2>&1 && iptables -S FORWARD | head -5
+        exit 1
+    fi
 }
 
 down() {
+    if command -v iptables >/dev/null 2>&1; then
+        iptables -D FORWARD -i $VS_HOST -o $VR_HOST -j ACCEPT 2>/dev/null || true
+        iptables -D FORWARD -i $VR_HOST -o $VS_HOST -j ACCEPT 2>/dev/null || true
+    fi
     tc qdisc del dev $VR_HOST root 2>/dev/null || true
     tc qdisc del dev $VR_HOST clsact 2>/dev/null || true
     tc qdisc del dev $VS_HOST clsact 2>/dev/null || true
