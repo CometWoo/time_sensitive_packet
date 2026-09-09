@@ -48,9 +48,11 @@ Cilium 기반 Kubernetes 클러스터에서 eBPF + TC `prio` qdisc 조합으로 
 - jitter는 도착 간격의 변동성이라 **시계 오차에 영향받지 않는 receiver-only 지표** → 가장 신뢰도 높음
 - **TSN의 핵심 가치는 "도착 시각의 예측 가능성"이며, 이 지표가 일관되게 개선되었다는 것이 가장 중요한 결과**
 
-**3. Throughput 동일 (~125 KB/s)**
-- 두 모드 모두 송신 간격이 1ms로 동일하므로 당연한 결과
-- **우선순위 큐가 throughput을 깎지 않음**을 보여줌 (부작용 없음 검증)
+**3. Throughput — 수신 구간 기준으로 재계산 (더 이상 "동일 ~125 KB/s"가 아님)**
+- 예전 스크립트는 `(n-1) × 1ms`를 분모로 써서 항상 125 KB/s가 나왔음 (계산 인공물)
+- `analysis/`는 `8 × 수신 바이트 / (마지막 수신 − 첫 수신)` (kbit/s)로 계산: baseline 264/420/416/414 kbit/s, proposed 500/478/561/414 kbit/s (CPU 10/30/50/70%), proposed cpu99 221 kbit/s
+- 차이의 원인은 qdisc가 아니라 **talker가 1ms 페이싱을 못 지킨 것** (수신 간격 중앙값 1.3~1.8 ms, 10000 패킷 수신에 20~45초). 요약 표의 `gap p50 us` 열과 같이 읽을 것
+- 손실 0, 중복/재정렬 0이므로 "우선순위 큐가 패킷을 버리지 않는다"는 결론은 유지되지만, throughput 값 자체로 qdisc 부작용을 판단할 수는 없음
 
 ### ⚠️ 신뢰성 낮은 결과 (해석 주의)
 
@@ -103,14 +105,19 @@ Cilium 기반 Kubernetes 클러스터에서 eBPF + TC `prio` qdisc 조합으로 
 
 ## 수치 분석 — 왜 이런 절대값이 나오는가
 
-### Throughput 125.0 KB/s — 왜 정확히 이 수치?
+### Throughput — 왜 예전엔 정확히 125.0 KB/s였고 지금은 아닌가?
 
-순수 계산값입니다:
+예전 값은 순수 계산값이었습니다:
 ```
 패킷 크기 × 송신 빈도 = 128 byte × (1000 pkt/s) = 128,000 byte/s ≈ 125.0 KB/s
-                                    └ interval=1ms → 1초에 1000개
+                                    └ interval=1ms → 1초에 1000개  (분모를 (n-1)×1ms로 고정)
 ```
-**talker.py가 의도적으로 sleep 기반 페이싱**을 하기 때문에 NIC 한계와 무관하게 이 값이 나옵니다. 만약 100 KB/s가 나온다면 시스템이 1ms 페이싱을 못 따라가고 있다는 신호입니다.
+`analysis/` 패키지는 분모를 **실제 수신 구간**(마지막 수신 시각 − 첫 수신 시각)으로 바꿨습니다 (단위 kbit/s).
+실측 CSV의 수신 구간은 10초가 아니라 20~45초(예: baseline_cpu10 38.9초 → 263.6 kbit/s = 32.2 KB/s,
+proposed_cpu10 20.5초 → 500.0 kbit/s = 61.0 KB/s)입니다. 즉 **talker.py의 sleep 기반 페이싱이 1ms를
+지키지 못했고**(수신 간격 중앙값 1.3~1.8 ms), 그 정도가 run마다 달라서 throughput이 run마다 다릅니다.
+이 차이는 qdisc 효과가 아니라 송신 측 페이싱/실행 시간 차이이므로, `fig_throughput.png`에서 proposed 막대가
+더 높다고 "우선순위 큐가 throughput을 올렸다"고 읽으면 안 됩니다.
 
 ### Median latency 0.8~1.4ms — 어디서 오는가?
 
@@ -406,7 +413,7 @@ sudo bash deploy-experiment.sh cleanup
 
 ### 그래프 읽는 법
 - **Figure 2 / 4 / 6 (CPU 부하별 비교)**: 3개 패널로 표시 — `low` (둘 다 데이터 있는 최저 부하, 보통 10%), `high` (둘 다 있는 최고, 보통 70%), `extreme` (한쪽이라도 있는 최고, 보통 99% — 극단적 부하에서의 Proposed 추세 표시).
-- **Figure 2 (Throughput)**: 막대 그래프. 1ms 간격 송신이므로 두 모드 모두 ~125 KB/s (의도된 결과 — 우선순위 큐의 목적은 throughput이 아니라 latency 안정성).
+- **Figure 2 (Throughput)** (신규 `fig_throughput.png`): 막대 그래프, 단위 kbit/s, 수신 구간 기준. run마다 값이 다른 것(264~561 kbit/s)은 talker 페이싱 차이이지 qdisc 효과가 아님 (위 "Throughput" 절 참고).
 - **Figure 3 (Latency 전체)**: X축 CPU 부하, Y축 latency (ms, log scale). 그룹당 6개 막대: Baseline {p50, p99, max} + Proposed {p50, p99, max}. 색은 mode, 빗금은 percentile.
 - **Figure 4 (Jitter 비교)**: Baseline vs Proposed jitter 막대. 99% 패널은 Proposed만 — baseline은 worker01 다운 위험으로 미측정.
 - **Figure 5 (Jitter 전체)**: Figure 3과 동일 구조의 jitter 버전.

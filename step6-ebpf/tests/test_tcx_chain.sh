@@ -63,13 +63,23 @@ map_key_sum() {
     [ -n "$id" ] || { echo 0; return; }
     bpftool -j map dump id "$id" | python3 -c "
 import sys, json
+
+def to_int(v):
+    # bpftool -j: BTF 가 있으면 'formatted' 에 정수, 없으면 ['0x00','0x01',...] (LE 바이트 배열)
+    if isinstance(v, int):
+        return v
+    if isinstance(v, list):
+        return int.from_bytes(bytes(int(b, 16) for b in v), 'little')
+    return int(v)
+
 tot = 0
 for e in json.load(sys.stdin):
-    k = e.get('key'); k = k if isinstance(k, int) else int(str(k).split(',')[0].strip('[]') or 0)
-    if k != $key: continue
-    for v in e.get('values', [{'value': e.get('value', 0)}]):
-        val = v['value']
-        tot += val if isinstance(val, int) else 0
+    fmt = e.get('formatted')
+    src = fmt if fmt is not None else e
+    if to_int(src['key']) != $key:
+        continue
+    for v in src.get('values') or [{'value': src.get('value', 0)}]:
+        tot += to_int(v['value'])
 print(tot)"
 }
 
