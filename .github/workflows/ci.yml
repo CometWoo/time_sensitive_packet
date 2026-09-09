@@ -30,11 +30,15 @@ jobs:
         run: |
           curl -sSfL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
             | sudo tar xz -C /usr/local/bin kubeconform
-          if [ -f step7-experiment/k8s/kustomization.yaml ]; then
-            kubectl kustomize step7-experiment/k8s | kubeconform -strict -summary -
-          else
-            kubeconform -strict -summary step7-experiment/k8s/*.yaml
-          fi
+          # configMapGenerator 가 kustomization 디렉터리 밖(../workload)의 .py 를 참조하므로 load restrictor 해제
+          kubectl kustomize --load-restrictor LoadRestrictionsNone step7-experiment/k8s | kubeconform -strict -summary -
+          # 스크립트가 __PLACEHOLDER__ 를 치환해 따로 적용하는 템플릿은 더미 값으로 렌더링해 검증
+          for t in step7-experiment/k8s/talker-job.yaml step7-experiment/k8s/be-flood-job.yaml step7-experiment/k8s/stress-daemonset.yaml; do
+            [ -f "$t" ] || continue
+            # 정수 자리(…_S__, 카운트)는 1, affinity operator 는 Exists, 나머지 문자열은 x 로 채운다
+            sed -E 's/__[A-Z_]*_S__/1/g; s/__STRESS_AFFINITY_OP__/Exists/g; s/__(CPU_LOAD|STRESS_WORKERS|TS_COUNT|FLOOD_MBPS|FLOOD_SIZE|TS_SIZE|TS_PORT|BE_PORT|TALKER_CPU)__/1/g; s/__[A-Z_]+__/x/g' "$t" \
+              | kubeconform -strict -summary - || { echo "template $t failed"; exit 1; }
+          done
 
   bpf:
     name: eBPF build + BPF_PROG_TEST_RUN + tcx chain

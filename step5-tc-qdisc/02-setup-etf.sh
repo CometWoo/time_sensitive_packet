@@ -1,84 +1,56 @@
 #!/bin/bash
-# Step 5-2: ETF (Earliest TxTime First) qdisc 설정
-#
-# 논문 구성:
-#   - mqprio의 tc0(큐1)에 ETF를 child qdisc로 추가
-#   - clockid: CLOCK_TAI
-#   - delta (스케줄링 간격): 150μs
-#   - deadline_mode: 활성화
-#
-# VM 환경 한계:
-#   - ETF는 NIC의 하드웨어 LaunchTime을 사용하는 것이 이상적
-#   - VM virtio NIC에서는 하드웨어 오프로드 불가 → 소프트웨어 ETF만 동작
-#   - 소프트웨어 ETF도 커널에서 txtime 기반 스케줄링은 수행함
-#   - 정밀도: 하드웨어 ~1μs vs 소프트웨어 ~수십μs
-#
-# ⚠️ 중요 (2026-06 코드 감사):
-#   ETF(sch_etf)의 is_packet_valid()는 SOCK_TXTIME 플래그가 없는 패킷을 INVALID로
-#   판정해 qdisc_drop() 한다. 본 repo의 talker.py는 SO_TXTIME/SCM_TXTIME을 설정하지
-#   않으므로, 이 스크립트로 ETF를 band 0(tc0=TSN)에 붙이면 TSN 패킷이 전량 드롭된다.
-#   따라서 이 스크립트는 "ETF 동작 원리 학습/참고용"이며, 실제 실험(deploy-experiment.sh)
-#   에서는 ETF를 attach하지 않는다. ETF를 실제로 쓰려면 talker가 패킷마다 SCM_TXTIME으로
-#   미래 송신 시각을 지정하도록 수정해야 한다 (+PTP 동기화 + 하드웨어 LaunchTime).
+# Step 5-2: ETF (Earliest TxTime First, sch_etf) — mqprio tc0 큐의 child (논문 §IV: delta 150 us, deadline mode)
+# ──────────────────────────────────────────────────────────────────────────────
+# STATUS: reference-only (2026-09)
+#   - deploy-experiment.sh 는 이 파일을 호출하지 않는다. 실험 경로에 ETF 는 없다 (ADR-0002).
+#   - 커밋된 결과(2026-05)에는 쓰이지 않았고, 이 형태로 실행된 적도 없다.
+#   - ★ sch_etf 의 is_packet_valid() 는 SOCK_TXTIME 이 없는 skb 를 qdisc_drop() 한다. talker.py 는
+#     SO_TXTIME/SCM_TXTIME 을 쓰지 않으므로 이 qdisc 를 tc0 에 붙이면 **TS 패킷이 전량 드롭**된다.
+#     skip_sock_check 옵션은 소켓 플래그 검사만 건너뛰고, txtime 이 과거인 패킷은 여전히 버린다.
+#   - clockid 는 CLOCK_TAI 만 받는다 (sch_etf: 다른 clockid 는 EINVAL). CLOCK_REALTIME 폴백은 삭제했다.
+#   - 이전 버전의 'offload off / deadline_mode on' 은 tc 문법 오류였다 — 플래그는 인자 없이 쓴다.
+# ──────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
+# shellcheck source=step5-tc-qdisc/common.sh
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-IFACE="${1:-$(ip route show default | awk '/default/ {print $5}' | head -1)}"
+IFACE=$(step5_iface "${1:-}")
+DELTA_NS="${DELTA_NS:-150000}"      # 150 us (논문)
 
 echo "=========================================="
-echo " ETF qdisc 설정"
-echo " 인터페이스: $IFACE"
+echo " ETF  dev=$IFACE  parent=100:1 (mqprio tc0 = TXQ0)  delta=${DELTA_NS}ns  clockid=CLOCK_TAI  deadline_mode"
 echo "=========================================="
 
-# mqprio가 먼저 설정되어 있는지 확인
-MQPRIO_CHECK=$(tc qdisc show dev "$IFACE" | grep mqprio || true)
-if [ -z "$MQPRIO_CHECK" ]; then
-    echo "mqprio가 설정되지 않음. 01-setup-mqprio.sh를 먼저 실행하세요."
-    exit 1
-fi
+echo "[1/3] 전제 확인..."
+tc qdisc show dev "$IFACE" | grep -q '^qdisc mqprio 100: root' \
+    || { echo "mqprio 100: 이 없다 — 01-setup-mqprio.sh 먼저 (TX 큐 >= 3 필요)"; exit 1; }
+python3 -c "import time; time.clock_gettime(time.CLOCK_TAI)" 2>/dev/null \
+    || { echo "CLOCK_TAI 를 읽을 수 없다 (sch_etf 는 CLOCK_TAI 만 받는다)"; exit 1; }
+echo "  mqprio 있음, CLOCK_TAI 사용 가능"
 
-# CLOCK_TAI 사용 가능 확인
-echo "[1/3] CLOCK_TAI 확인..."
-if python3 -c "import time; time.clock_gettime(time.CLOCK_TAI)" 2>/dev/null; then
-    echo "  CLOCK_TAI 사용 가능"
-    CLOCKID="CLOCK_TAI"
-else
-    echo "  CLOCK_TAI 사용 불가 → CLOCK_REALTIME 대체"
-    CLOCKID="CLOCK_REALTIME"
-fi
+cat <<'EOF'
 
-# ETF 설정
-echo -e "\n[2/3] ETF qdisc 추가 (tc0 큐에)..."
-# mqprio의 첫 번째 child는 100:1 (tc0에 해당)
-# ETF를 tc0의 child qdisc로 추가
+  ⚠ 경고: 이 ETF 는 SO_TXTIME 으로 송신 시각을 지정한 패킷만 통과시킨다. 이 저장소의 talker.py 는
+    SO_TXTIME 을 쓰지 않으므로 실험 트래픽(UDP 6000, priority → tc0) 은 여기서 전부 드롭된다.
+    학습/참고용으로만 붙이고, deploy-experiment.sh 를 돌리기 전에 반드시 제거하라:
+      sudo tc qdisc del dev IFACE parent 100:1
+EOF
 
-# 기존 child qdisc 제거
-sudo tc qdisc del dev "$IFACE" parent 100:1 2>/dev/null || true
+echo -e "\n[2/3] ETF 추가 (100:1 = mqprio 의 첫 per-queue 클래스 = tc0 = TXQ0)..."
+# 하드웨어 LaunchTime 오프로드('offload' 플래그) 는 i210/i225 등에서만 — VM/virtio 에는 없다 → 소프트웨어 ETF.
+sudo tc qdisc replace dev "$IFACE" parent 100:1 handle 10: etf clockid CLOCK_TAI delta "$DELTA_NS" deadline_mode
+tc qdisc show dev "$IFACE" | grep -q '^qdisc etf 10: parent 100:1' || { show_qdisc "$IFACE"; echo "ETF 확인 실패"; exit 1; }
 
-sudo tc qdisc add dev "$IFACE" parent 100:1 handle 10: etf \
-    clockid "$CLOCKID" \
-    delta 150000 \
-    offload off \
-    deadline_mode on
-# delta 150000: 150μs (논문 설정)
-# offload off: VM에서 하드웨어 오프로드 불가
-# deadline_mode on: 데드라인 초과 패킷 드롭
+echo -e "\n[3/3] 확인..."
+show_qdisc "$IFACE"
 
-echo "  ETF 설정 완료 (clockid=$CLOCKID, delta=150μs)"
+cat <<EOF
 
-# 검증
-echo -e "\n[3/3] 전체 qdisc 구조 확인..."
-echo "--- tc qdisc show ---"
-tc qdisc show dev "$IFACE"
-
-echo -e "\n=========================================="
-echo " ETF 설정 완료"
-echo ""
-echo " 구조: root(mqprio) → tc0(ETF) / tc1(pfifo) / tc2(pfifo)"
-echo ""
-echo " ETF 동작 원리:"
-echo "   - 패킷에 SO_TXTIME으로 전송 시각을 설정"
-echo "   - ETF가 해당 시각까지 패킷을 보관 후 정확한 시점에 전송"
-echo "   - deadline_mode: 전송 시각이 지나면 패킷 드롭"
-echo ""
-echo " 다음: 03-setup-ets.sh (ETS qdisc 추가)"
-echo "=========================================="
+==========================================
+ ETF 완료: root mqprio 100: → 100:1(tc0) etf 10: / 100:2(tc1) / 100:3..(tc2)
+ 동작: 패킷의 SCM_TXTIME (CLOCK_TAI) 순으로 정렬해 그 시각에 송신, delta 만큼 앞서 깨어남.
+       deadline_mode: txtime 을 '늦어도 이때까지' 로 해석. txtime 이 과거이거나 SO_TXTIME 이 없으면 드롭.
+ 제거: sudo tc qdisc del dev $IFACE parent 100:1
+ 다음: 03-setup-taprio.sh (802.1Qbv 게이트 스케줄; mqprio 를 통째로 대체한다)
+==========================================
+EOF

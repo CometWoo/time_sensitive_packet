@@ -1,139 +1,131 @@
 #!/bin/bash
-# Step 2-1: 사전 요구사항 검증 스크립트
-# 논문 환경: Ubuntu 22.04, kernel 5.15, 72 cores, 16GB RAM, 4-queue NIC
-# VM 환경: Ubuntu 22.04, kernel 5.15, 4 vCPU, 4GB RAM, virtio NIC
+# Step 2-1: 사전 요구사항 검증 (control-plane / worker 공통)
+# ──────────────────────────────────────────────────────────────────────────────
+# STATUS: reference-only (2026-09)
+#   - deploy-experiment.sh 는 이 파일을 호출하지 않는다.
+#   - 커밋된 결과(step8-measurement/results, 2026-05)를 만든 VM 은 이 스크립트가 아니라 수동으로
+#     준비됐다 (Ubuntu 24.04.4 / kernel 6.17 / kubeadm 1.30.14 / containerd 2.2.1 / Cilium 1.19.1,
+#     2 vCPU / 3.8 GiB, TX queue 1개 — docs/DATA_PROVENANCE.md). 당시 이 파일은 22.04/5.15 템플릿이었다.
+#   - 지금은 측정된 스택에 맞춰 기준을 고쳤지만 이 형태로 실행된 적은 없다. 실행 전 읽고 맞춰라.
+#   - 실험 경로: step2(OS) → step3(kubeadm) → step4(Cilium) → deploy-experiment.sh. step5 는 참고용.
+# ──────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+# ── 기준 (측정된 스택) ───────────────────────────────────────────────────────
+UBUNTU_VERSION="${UBUNTU_VERSION:-24.04}"
+MIN_KERNEL="${MIN_KERNEL:-6.6}"          # tcx (BPF_TCX_EGRESS) — Cilium 앞에 분류기를 붙이려면 필수 (ADR-0005)
+MIN_CPUS="${MIN_CPUS:-2}"                # 측정 VM 은 2 vCPU. 4 이상 권장 (talker 1 CPU Guaranteed + be-flood)
+MIN_MEM_GB="${MIN_MEM_GB:-3}"
+# 실험이 실제로 쓰는 모듈 (HTB 병목 + prio/fq_codel/pfifo leaf + cls_bpf legacy 폴백)
+MODULES=(br_netfilter overlay sch_prio sch_fq_codel sch_htb cls_bpf act_bpf)
+# step5 참고 스크립트(mqprio/ETF/taprio)용 — 실험에는 불필요, 없어도 WARN
+REF_MODULES=(sch_mqprio sch_etf sch_taprio)
+TOOLS=(ip tc ethtool curl git make gcc clang bpftool nsenter crictl kubectl python3)
 
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+N_FAIL=0
 pass()  { echo -e "${GREEN}[PASS]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
-fail()  { echo -e "${RED}[FAIL]${NC} $1"; }
+fail()  { N_FAIL=$((N_FAIL + 1)); echo -e "${RED}[FAIL]${NC} $1"; }
 
 echo "=========================================="
-echo " 논문 재현 환경 사전 검증"
+echo " 실험 환경 사전 검증 (기준: Ubuntu $UBUNTU_VERSION, kernel >= $MIN_KERNEL)"
 echo "=========================================="
 
-# 1. OS 버전 확인
-echo -e "\n--- OS 확인 ---"
-if grep -q "22.04" /etc/lsb-release 2>/dev/null; then
-    pass "Ubuntu 22.04 확인됨"
+# 1. OS
+echo -e "\n--- OS ---"
+OS_DESC=$( (lsb_release -ds 2>/dev/null) || (grep PRETTY_NAME /etc/os-release | cut -d= -f2) || echo unknown)
+if grep -q "VERSION_ID=\"$UBUNTU_VERSION\"" /etc/os-release 2>/dev/null; then
+    pass "Ubuntu $UBUNTU_VERSION: $OS_DESC"
 else
-    CURRENT_OS=$(lsb_release -ds 2>/dev/null || cat /etc/os-release | grep PRETTY_NAME | cut -d= -f2)
-    warn "Ubuntu 22.04가 아님: $CURRENT_OS (논문 요구: Ubuntu 22.04)"
+    warn "Ubuntu $UBUNTU_VERSION 이 아님: $OS_DESC (다른 배포판도 kernel/모듈 조건만 맞으면 동작)"
 fi
 
-# 2. 커널 버전 확인
-echo -e "\n--- 커널 확인 ---"
-KVER=$(uname -r)
-if [[ "$KVER" == 5.15.* ]]; then
-    pass "Kernel 5.15.x 확인됨: $KVER"
-elif [[ "$KVER" > "5.15" ]]; then
-    warn "Kernel $KVER (논문 요구: 5.15.0, 상위 버전이라 대부분 호환)"
+# 2. 커널 — 숫자 비교 (문자열 비교 '>' 는 5.15 > 6.6 같은 오판을 낸다)
+echo -e "\n--- 커널 ---"
+KVER=$(uname -r); KMM=$(echo "$KVER" | cut -d. -f1-2)
+if [ "$(printf '%s\n' "$MIN_KERNEL" "$KMM" | sort -V | head -1)" = "$MIN_KERNEL" ]; then
+    pass "kernel $KVER >= $MIN_KERNEL (tcx 사용 가능)"
 else
-    fail "Kernel $KVER (논문 요구: 5.15.0 이상, 업그레이드 필요)"
+    fail "kernel $KVER < $MIN_KERNEL — tcx 없음. Cilium(legacy tc) 이 TC_ACT_OK 를 반환하면 분류기가 실행되지 않는다 (ADR-0005). HWE 커널로 올릴 것"
 fi
 
-# 3. CPU 확인
-echo -e "\n--- CPU 확인 ---"
+# 3. CPU
+echo -e "\n--- CPU ---"
 NCPU=$(nproc)
-echo "  논리 코어 수: $NCPU (논문: 72코어, VM 권장: 4코어)"
 if [ "$NCPU" -ge 4 ]; then
-    pass "최소 4코어 충족"
+    pass "논리 코어 $NCPU (talker Guaranteed 1 CPU + be-flood + 시스템)"
+elif [ "$NCPU" -ge "$MIN_CPUS" ]; then
+    warn "논리 코어 $NCPU — 측정 VM 과 같은 2 vCPU. control-plane 에서 talker(1 CPU) 가 Pending 이면 experiment.env TALKER_CPU_REQUEST=500m"
 else
-    fail "CPU 코어 $NCPU개 — 최소 4개 필요 (2개 isolcpus + 2개 시스템용)"
+    fail "논리 코어 $NCPU < $MIN_CPUS"
 fi
 
-# 4. 메모리 확인
-echo -e "\n--- 메모리 확인 ---"
-MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+# 4. 메모리
+echo -e "\n--- 메모리 ---"
+MEM_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
 MEM_GB=$((MEM_KB / 1024 / 1024))
-echo "  총 메모리: ${MEM_GB}GB (논문: 16GB, VM 권장: 4GB)"
-if [ "$MEM_GB" -ge 3 ]; then
-    pass "최소 메모리 요구 충족"
-else
-    fail "메모리 ${MEM_GB}GB — 최소 4GB 권장"
-fi
+if [ "$MEM_GB" -ge "$MIN_MEM_GB" ]; then pass "메모리 ${MEM_GB} GiB"; else fail "메모리 ${MEM_GB} GiB < ${MIN_MEM_GB} GiB"; fi
 
-# 5. NIC 큐 확인
-echo -e "\n--- NIC 큐 확인 ---"
-DEFAULT_IF=$(ip route show default | awk '/default/ {print $5}' | head -1)
+# 5. NIC
+echo -e "\n--- NIC ---"
+DEFAULT_IF=$(ip -o route show default 2>/dev/null | awk '{print $5; exit}')
 if [ -n "$DEFAULT_IF" ]; then
-    TX_QUEUES=$(ls -d /sys/class/net/$DEFAULT_IF/queues/tx-* 2>/dev/null | wc -l)
-    RX_QUEUES=$(ls -d /sys/class/net/$DEFAULT_IF/queues/rx-* 2>/dev/null | wc -l)
-    echo "  인터페이스: $DEFAULT_IF, TX큐: $TX_QUEUES, RX큐: $RX_QUEUES"
-    echo "  논문 요구: 4 tx/rx 큐 (하드웨어)"
-    if [ "$TX_QUEUES" -lt 4 ]; then
-        warn "TX 큐 ${TX_QUEUES}개 < 논문 요구 4개. VM virtio NIC는 보통 1~2개."
-        warn "→ Step 5에서 소프트웨어 mqprio 대안 사용 예정"
-    else
-        pass "TX 큐 $TX_QUEUES개 — 논문 요구 충족"
+    TXQ=$(find "/sys/class/net/$DEFAULT_IF/queues" -maxdepth 1 -name 'tx-*' 2>/dev/null | wc -l)
+    RXQ=$(find "/sys/class/net/$DEFAULT_IF/queues" -maxdepth 1 -name 'rx-*' 2>/dev/null | wc -l)
+    pass "default route 인터페이스 $DEFAULT_IF (TX 큐 $TXQ, RX 큐 $RXQ, driver $(ethtool -i "$DEFAULT_IF" 2>/dev/null | awk '/^driver/ {print $2}'))"
+    if [ "$TXQ" -lt 3 ]; then
+        echo "       TX 큐 $TXQ 개: mqprio/taprio(step5 참고 스크립트) 는 붙지 않는다 (num_tc 3 > TXQ). 실험은 HTB + prio 를 쓴다 (ADR-0002)"
     fi
 else
-    fail "기본 네트워크 인터페이스를 찾을 수 없음"
+    fail "default route 인터페이스를 찾을 수 없음"
 fi
 
-# 6. 가상화 환경 확인
-echo -e "\n--- 가상화 확인 ---"
-VIRT=$(systemd-detect-virt 2>/dev/null || echo "unknown")
-echo "  가상화 유형: $VIRT"
-if [ "$VIRT" != "none" ]; then
-    warn "VM 환경 감지. 하드웨어 타임스탬프 및 NIC 큐 제한 있음"
-    warn "→ PTP는 소프트웨어 타임스탬프 모드 사용, ETF는 소프트웨어 모드 사용"
-fi
+# 6. 가상화
+echo -e "\n--- 가상화 ---"
+VIRT=$(systemd-detect-virt 2>/dev/null || echo unknown)
+echo "  $VIRT"
+[ "$VIRT" = none ] || echo "  VM: 하드웨어 타임스탬프/PTP 없음. 두 VM 간 시계 오프셋(5월 측정 14–37 ms) 이 one-way latency 에 섞인다 (ADR-0012)"
 
-# 7. 필수 커널 모듈 확인
-echo -e "\n--- 커널 모듈 확인 ---"
-MODULES=("br_netfilter" "overlay" "sch_mqprio" "sch_etf" "sch_ets" "cls_bpf" "act_bpf")
+# 7. 커널 모듈
+echo -e "\n--- 커널 모듈 (modprobe -n) ---"
 for mod in "${MODULES[@]}"; do
-    if modprobe -n "$mod" 2>/dev/null; then
-        pass "모듈 $mod 사용 가능"
-    else
-        fail "모듈 $mod 없음 — 커널 재빌드 또는 모듈 설치 필요"
-    fi
+    if modprobe -n "$mod" 2>/dev/null; then pass "$mod"; else fail "$mod 없음 (built-in 이면 /boot/config 의 CONFIG_*=y 확인)"; fi
+done
+for mod in "${REF_MODULES[@]}"; do
+    if modprobe -n "$mod" 2>/dev/null; then echo "  (참고) $mod 사용 가능"; else warn "$mod 없음 — step5 참고 스크립트에만 필요"; fi
 done
 
-# 8. eBPF 지원 확인
-echo -e "\n--- eBPF 지원 확인 ---"
-if [ -d /sys/fs/bpf ]; then
-    pass "BPF 파일시스템 마운트됨"
+# 8. eBPF / bpffs / 커널 config (=y 또는 =m 모두 허용)
+echo -e "\n--- eBPF ---"
+if mountpoint -q /sys/fs/bpf 2>/dev/null; then pass "bpffs 마운트됨"; else warn "bpffs 미마운트 — deploy-experiment.sh 가 mount -t bpf 한다"; fi
+CFG=""
+if [ -f /proc/config.gz ]; then CFG=$(zcat /proc/config.gz); elif [ -f "/boot/config-$KVER" ]; then CFG=$(cat "/boot/config-$KVER"); fi
+if [ -n "$CFG" ]; then
+    for c in CONFIG_BPF CONFIG_BPF_SYSCALL CONFIG_BPF_JIT CONFIG_NET_CLS_BPF CONFIG_NET_ACT_BPF CONFIG_NET_SCH_HTB CONFIG_NET_SCH_PRIO CONFIG_NET_CLS_U32; do
+        if grep -Eq "^${c}=(y|m)$" <<<"$CFG"; then pass "$c"; else fail "$c 미설정"; fi
+    done
 else
-    warn "BPF 파일시스템 미마운트 — 'mount -t bpf bpf /sys/fs/bpf' 필요"
+    warn "커널 config 를 읽을 수 없음 (/proc/config.gz, /boot/config-$KVER)"
 fi
 
-if [ -f /proc/config.gz ]; then
-    for cfg in CONFIG_BPF CONFIG_BPF_SYSCALL CONFIG_BPF_JIT CONFIG_NET_CLS_BPF CONFIG_NET_ACT_BPF; do
-        if zcat /proc/config.gz | grep -q "${cfg}=y"; then
-            pass "$cfg=y"
-        else
-            warn "$cfg 미설정 또는 모듈"
-        fi
-    done
-elif [ -f "/boot/config-$(uname -r)" ]; then
-    for cfg in CONFIG_BPF CONFIG_BPF_SYSCALL CONFIG_BPF_JIT CONFIG_NET_CLS_BPF CONFIG_NET_ACT_BPF; do
-        if grep -q "${cfg}=y" "/boot/config-$(uname -r)"; then
-            pass "$cfg=y"
-        else
-            warn "$cfg 미설정 또는 모듈"
-        fi
-    done
-fi
-
-# 9. 필수 명령어 확인
-echo -e "\n--- 필수 도구 확인 ---"
-TOOLS=("ip" "tc" "ethtool" "curl" "git" "make" "gcc")
+# 9. 도구
+echo -e "\n--- 도구 ---"
 for tool in "${TOOLS[@]}"; do
-    if command -v "$tool" &>/dev/null; then
-        pass "$tool 설치됨"
-    else
-        fail "$tool 미설치 — 02-install-packages.sh로 설치 필요"
-    fi
+    if command -v "$tool" >/dev/null 2>&1; then pass "$tool"; else fail "$tool 없음 — 02-install-packages.sh / step3 (kubectl, crictl)"; fi
 done
+if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists libbpf; then
+    LIBBPF=$(pkg-config --modversion libbpf)
+    if [ "$(printf '%s\n' 1.3 "$LIBBPF" | sort -V | head -1)" = 1.3 ]; then pass "libbpf $LIBBPF >= 1.3 (tcx_attach 빌드 가능)"; else fail "libbpf $LIBBPF < 1.3 — tcx_attach 빌드 불가"; fi
+else
+    fail "libbpf-dev 없음 (pkg-config libbpf)"
+fi
 
 echo -e "\n=========================================="
-echo " 검증 완료. [FAIL] 항목은 반드시 해결 필요."
-echo " [WARN] 항목은 VM 환경 한계로 대안 사용."
+if [ "$N_FAIL" -eq 0 ]; then
+    echo " 검증 통과. 다음: 02-install-packages.sh (미설치 도구가 있으면) → step3-kubernetes/"
+else
+    echo " [FAIL] ${N_FAIL}건 — 해결 후 재실행"
+fi
 echo "=========================================="
+[ "$N_FAIL" -eq 0 ]
