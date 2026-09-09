@@ -18,8 +18,10 @@
   표는 재해석 목적으로만 남겼다.
 - talker 는 파이썬 sleep/spin 페이싱이다. 5월엔 DNS 질의와 CFS quota 로 실효 216–547 pkt/s 였고,
   9월 테스트베드에서도 1 ms 페이싱 정밀도는 수십 μs 수준이다. jitter 지표에 송신 오차가 포함된다.
-- 테스트베드 latency 는 사용자 공간 `time.time_ns()` 기준이라 커널 RX 타임스탬프보다 스케줄링 지연을
-  포함한다(로드맵: `SO_TIMESTAMPNS`).
+- `latency_ms` 는 사용자 공간 `time.time_ns()` 기준이라 커널 RX 타임스탬프보다 수신 프로세스 스케줄링
+  지연(WSL2 실측 p50 ≈ 0.1 ms)을 포함한다. `listener.py --kernel-ts` 가 `SO_TIMESTAMPNS_NEW` 로
+  `recv_kernel_ns` 컬럼을 추가 기록하지만(테스트베드 기본 on), 기존 결과와의 비교를 위해 `latency_ms`
+  정의는 바꾸지 않았다. `results/testbed/ci-34294518788` 은 이 컬럼이 없는 run 이다.
 - 부트스트랩은 i.i.d. 가정. 정규화된 run 의 p50 CI 는 오프셋 분산을 빼고 계산돼 약간 좁다.
 - CI 러너는 공유 vCPU 라 run 간 잡음이 있다. 조건당 3 run 으로는 작은 차이를 판별할 수 없다 —
   이 프로젝트가 보고하는 차이는 두 자릿수 배 이상이라 판별에 문제가 없다.
