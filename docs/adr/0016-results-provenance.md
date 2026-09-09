@@ -5,7 +5,7 @@
 
 ## 문제
 
-`step8-measurement/results/*.csv` 9개는 2026-05-25 에 commit `8fc0be1` 구성(3-프로그램 eBPF,
+`results/k8s-2026-05/*.csv` 9개는 2026-05-25 에 commit `8fc0be1` 구성(3-프로그램 eBPF,
 UDP 5000, `SO_PRIORITY=3`, `prio priomap 2 2 1 0…` vs 기본 qdisc)으로 측정됐다. 이후 두 번의
 재설계(6월 단일 프로그램, 9월 호스트 NIC egress)가 있었지만 데이터는 그대로였고, README 는 그
 표를 최신 아키텍처 아래에 두었다. 감사(F01)와 커널 소스 검증으로 다음이 확정됐다.
@@ -19,7 +19,7 @@ UDP 5000, `SO_PRIORITY=3`, `prio priomap 2 2 1 0…` vs 기본 qdisc)으로 측�
 
 ## 결정
 
-- 데이터는 **삭제하지 않는다.** `step8-measurement/results/` 에 그대로 두고, 표는
+- 데이터는 **삭제하지 않는다.** `results/k8s-2026-05/` 에 그대로 두고, 표는
   [docs/RESULTS.md](../RESULTS.md) 의 "2026-05 K8s 측정 — 재해석" 절로 옮긴다. 각 파일에
   출처(commit, 구성, 실효 송신 속도, p1 오프셋)를 붙인다([docs/DATA_PROVENANCE.md](../DATA_PROVENANCE.md)).
 - README 상단 상태 배너에 "5월 데이터는 메커니즘이 작동하지 않은 상태의 측정" 임을 명시한다.

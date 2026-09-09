@@ -28,13 +28,13 @@ flowchart LR
 
 | 디렉터리 | 역할 | 검증 |
 |---|---|---|
-| `step6-ebpf/src/ts_classifier.c` | 분류기: AVTP / 802.1Q·ad PCP ≥ 5 / IPv4-UDP dport(6000 + map) → priority, DSCP, PERCPU 카운터. IP 단편·IPv6 는 건드리지 않음 | 24+2 BPF_PROG_TEST_RUN 테스트, verifier 로드 (5.15, 6.17) |
-| `step6-ebpf/src/prio_probe.c` | `skb->priority` 히스토그램 (veth 리셋 증명) | 테스트베드 실측 |
-| `step6-ebpf/src/tcx_dummy_ok.c` | Cilium 흉내 (TC_ACT_OK) | `tests/test_tcx_chain.sh` |
-| `step6-ebpf/tools/tcx_attach.c` | libbpf tcx 링크 attach (BPF_F_BEFORE/AFTER, pin, query) | CI (kernel 6.17) |
+| `bpf/src/ts_classifier.c` | 분류기: AVTP / 802.1Q·ad PCP ≥ 5 / IPv4-UDP dport(6000 + map) → priority, DSCP, PERCPU 카운터. IP 단편·IPv6 는 건드리지 않음 | 24+2 BPF_PROG_TEST_RUN 테스트, verifier 로드 (5.15, 6.17) |
+| `bpf/src/prio_probe.c` | `skb->priority` 히스토그램 (veth 리셋 증명) | 테스트베드 실측 |
+| `bpf/src/tcx_dummy_ok.c` | Cilium 흉내 (TC_ACT_OK) | `tests/test_tcx_chain.sh` |
+| `bpf/tools/tcx_attach.c` | libbpf tcx 링크 attach (BPF_F_BEFORE/AFTER, pin, query) | CI (kernel 6.17) |
 | `testbed/` | netns 토폴로지(Pod ↔ veth ↔ host ↔ veth), tbf 병목, BE 홍수, 조건별 러너, 메타데이터 | WSL2(기능), CI(경합) |
-| `step7-experiment/` | talker/listener + K8s 매니페스트(kustomize) | 테스트베드에서 같은 파일 사용 |
-| `deploy-experiment.sh` | K8s 클러스터 실험 오케스트레이션 (HTB + u32 + 조건 qdisc + tcx attach + Job/DaemonSet) | **클러스터 미실행** |
+| `workload/` | talker/listener + K8s 매니페스트(kustomize) | 테스트베드에서 같은 파일 사용 |
+| `scripts/experiment.sh` | K8s 클러스터 실험 오케스트레이션 (HTB + u32 + 조건 qdisc + tcx attach + Job/DaemonSet) | **클러스터 미실행** |
 | `analysis/` | 통계·그래프·리포트 (`tsn-analysis`) | 65 pytest |
 | `.github/workflows/` | lint / BPF build+test+tcx / analysis / testbed 실험 | 실행 중 |
 

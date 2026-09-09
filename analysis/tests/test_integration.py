@@ -1,4 +1,4 @@
-"""Integration test against the real step8-measurement/results CSVs.
+"""Integration test against the real results/k8s-2026-05 CSVs.
 
 Reference values come from README.md (computed with nearest-rank percentiles
 after 1st-percentile normalisation); numpy ``linear`` must land within 0.3 ms.
@@ -13,7 +13,7 @@ import pytest
 
 from tsn_analysis.cli import main
 
-REAL_RESULTS = Path(__file__).resolve().parents[2] / "step8-measurement" / "results"
+REAL_RESULTS = Path(__file__).resolve().parents[2] / "results" / "k8s-2026-05"
 
 pytestmark = pytest.mark.skipif(
     not (REAL_RESULTS / "baseline_cpu10.csv").exists(),

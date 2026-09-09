@@ -12,7 +12,7 @@
 - 커널 `6.17.0-1022-azure`, 병목 `tbf rate 20mbit` 아래 조건별 qdisc, BE 홍수 30 Mbit/s(1400 B UDP:5001),
   TS 흐름 128 B UDP:6000 @ 1 ms × 10,000, 조건당 3 run, 송수신 같은 시계(절대 one-way latency 유효).
 - 원본: [`results/testbed/ci-34294518788/`](../results/testbed/ci-34294518788/) (CSV, `.meta.json`,
-  `report/summary.md`, 그래프). 재현: `.github/workflows/testbed.yml` 또는 `sudo bash testbed/run_testbed.sh`.
+  `report/summary.md`, 그래프). 재현: `.github/workflows/testbed.yml` 또는 `sudo bash testbed/run.sh`.
 
 ### 1.1 헤드라인
 
@@ -79,7 +79,7 @@ CI 러너는 공유 vCPU 이며 veth 경로라 물리 NIC/드라이버 큐가 �
   talker Pod(master) → listener Pod(worker), UDP 5000, `SO_PRIORITY=3`, proposed = `prio bands 3 priomap
   2 2 1 0 …`, baseline = root qdisc 삭제(배포판 기본 fq_codel), stress-ng CPU 부하 10/30/50/70(/99) %,
   **경쟁 네트워크 트래픽 없음**, 호스트측 BPF 는 tcx 순서로 미실행(카운터 0).
-- 원본: `step8-measurement/results/*.csv` (10,000 행 × 9). 파일별 출처: [DATA_PROVENANCE.md](DATA_PROVENANCE.md).
+- 원본: `results/k8s-2026-05/*.csv` (10,000 행 × 9). 파일별 출처: [DATA_PROVENANCE.md](DATA_PROVENANCE.md).
 
 ### 2.1 당시 표 (p1 정규화, 선형 백분위, `tsn-analysis summary --normalize-skew`)
 
@@ -115,7 +115,7 @@ CI 러너는 공유 vCPU 이며 veth 경로라 물리 NIC/드라이버 큐가 �
 
 ## 3. K8s 클러스터 재측정 (미완료)
 
-새 설계로 클러스터에서 재측정하는 `deploy-experiment.sh matrix` 는 구현했지만, 이 시점에 VM 클러스터에
+새 설계로 클러스터에서 재측정하는 `scripts/experiment.sh matrix` 는 구현했지만, 이 시점에 VM 클러스터에
 접근할 수 없어 실행하지 못했다. 실행 시 결과는 `results/k8s/<date>/` 에 `<condition>_cpu<N>_run<k>.csv`
 + `.meta.json` 으로 쌓이고 같은 `tsn-analysis` 로 요약된다. 기대: `pfifo_fast_noclsf` ≈ `fifo` (veth 리셋
 재확인), `*_clsf` 에서 HTB 20 Mbit/s 병목 하 p99 수 ms 이하, 수신 DSCP 46.

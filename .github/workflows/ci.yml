@@ -31,9 +31,9 @@ jobs:
           curl -sSfL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
             | sudo tar xz -C /usr/local/bin kubeconform
           # configMapGenerator 가 kustomization 디렉터리 밖(../workload)의 .py 를 참조하므로 load restrictor 해제
-          kubectl kustomize --load-restrictor LoadRestrictionsNone step7-experiment/k8s | kubeconform -strict -summary -
+          kubectl kustomize --load-restrictor LoadRestrictionsNone k8s | kubeconform -strict -summary -
           # 스크립트가 __PLACEHOLDER__ 를 치환해 따로 적용하는 템플릿은 더미 값으로 렌더링해 검증
-          for t in step7-experiment/k8s/talker-job.yaml step7-experiment/k8s/be-flood-job.yaml step7-experiment/k8s/stress-daemonset.yaml; do
+          for t in k8s/talker-job.yaml k8s/be-flood-job.yaml k8s/stress-daemonset.yaml; do
             [ -f "$t" ] || continue
             # 정수 자리(…_S__, 카운트)는 1, affinity operator 는 Exists, 나머지 문자열은 x 로 채운다
             sed -E 's/__[A-Z_]*_S__/1/g; s/__STRESS_AFFINITY_OP__/Exists/g; s/__(CPU_LOAD|STRESS_WORKERS|TS_COUNT|FLOOD_MBPS|FLOOD_SIZE|TS_SIZE|TS_PORT|BE_PORT|TALKER_CPU)__/1/g; s/__[A-Z_]+__/x/g' "$t" \
@@ -49,23 +49,23 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq clang llvm make gcc pkg-config libbpf-dev linux-libc-dev python3-pytest iproute2
-          bash ci/install-bpftool.sh
+          bash scripts/ci/install-bpftool.sh
           uname -r; clang --version | head -1; pkg-config --modversion libbpf
       - name: build
         run: |
-          make -C step6-ebpf
-          make -C step6-ebpf tools
-          make -C step6-ebpf verify
+          make -C bpf
+          make -C bpf tools
+          make -C bpf verify
       - name: unit tests (bpftool prog run)
-        run: sudo -E env "PATH=$PATH" make -C step6-ebpf test
+        run: sudo -E env "PATH=$PATH" make -C bpf test
       - name: tcx chain integration test (kernel >= 6.6)
-        run: sudo -E env "PATH=$PATH" make -C step6-ebpf test-tcx
+        run: sudo -E env "PATH=$PATH" make -C bpf test-tcx
       - uses: actions/upload-artifact@v4
         with:
           name: bpf-objects
           path: |
-            step6-ebpf/build/*.bpf.o
-            step6-ebpf/build/tcx_attach
+            bpf/build/*.bpf.o
+            bpf/build/tcx_attach
 
   analysis:
     name: analysis package tests + report on committed results
@@ -82,9 +82,9 @@ jobs:
       - name: regenerate report + figures for the K8s results (May 2026)
         run: |
           mkdir -p out/k8s-may2026
-          tsn-analysis summary step8-measurement/results --normalize-skew --baseline baseline \
+          tsn-analysis summary results/k8s-2026-05 --normalize-skew --baseline baseline \
             --markdown out/k8s-may2026/summary.md --json out/k8s-may2026/summary.json
-          tsn-analysis plot step8-measurement/results --normalize-skew --out out/k8s-may2026
+          tsn-analysis plot results/k8s-2026-05 --normalize-skew --out out/k8s-may2026
           cat out/k8s-may2026/summary.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:

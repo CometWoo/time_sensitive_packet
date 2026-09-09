@@ -22,7 +22,7 @@ NIC 에는 K8s/Cilium 제어 트래픽뿐이었다. CPU 부하(stress-ng)는 네
   `rate 20mbit`, u32 로 listener IP 만 매칭해 제어 평면 트래픽은 제한하지 않음) 을 두고 그 **자식**
   으로 조건별 qdisc(pfifo/fq_codel/pfifo_fast/prio)를 단다. TBF/HTB 는 자식 qdisc 를 peek/dequeue
   하므로 backlog 는 자식 안에 쌓이고, 우선순위 선택은 자식에서 일어난다.
-- 경쟁: `testbed/be_flood.py` 가 1400 B UDP 를 30 Mbit/s 로 제공(링크의 150 %) → 지속적 backlog.
+- 경쟁: `workload/be_flood.py` 가 1400 B UDP 를 30 Mbit/s 로 제공(링크의 150 %) → 지속적 backlog.
   수신측 `udp_sink.py` 가 받아 버려서 ICMP unreachable 역방향 트래픽을 막는다.
 - TS: `talker.py` 1 ms 간격 128 B UDP:6000, `listener.py` 가 one-way latency / jitter / 손실 /
   수신 TOS 를 기록.

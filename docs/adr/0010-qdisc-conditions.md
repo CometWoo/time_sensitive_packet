@@ -37,5 +37,5 @@ priomap) 두 조건이었다. 두 가지가 섞여 있었다.
 
 ## 결과
 
-`testbed/run_testbed.sh --conditions`, `deploy-experiment.sh run <condition>`,
+`testbed/run.sh --conditions`, `scripts/experiment.sh run <condition>`,
 `analysis` 패키지의 baseline 자동 선택(`baseline` > `pfifo`/`fifo` > 첫 조건) 이 이 이름을 공유한다.

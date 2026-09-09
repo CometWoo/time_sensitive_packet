@@ -75,7 +75,7 @@ flowchart LR
 
 | 무엇 | 방법 | 어디서 |
 |---|---|---|
-| 분류 규칙·DSCP·체크섬·설정 map·단편/절단/IPv6 | **26개 BPF_PROG_TEST_RUN 단위 테스트** (`bpftool prog run`, 크래프트 패킷) | `step6-ebpf/tests/`, CI `bpf` (kernel 6.17) + WSL2 5.15 |
+| 분류 규칙·DSCP·체크섬·설정 map·단편/절단/IPv6 | **26개 BPF_PROG_TEST_RUN 단위 테스트** (`bpftool prog run`, 크래프트 패킷) | `bpf/tests/`, CI `bpf` (kernel 6.17) + WSL2 5.15 |
 | tcx 순서(OK 가 체인을 끊음 / BEFORE 로 둘 다 실행) | 통합 테스트 `test_tcx_chain.sh` | CI `bpf` — ALL PASS |
 | veth priority 리셋, 분류기 카운터, DSCP 도착, 경합 하 latency/손실 | netns 테스트베드 3 run × 5 조건 | CI `testbed` 아티팩트 → `results/` |
 | 통계 함수 | 65 pytest (Cliff's δ O(n log n) vs O(n²) 대조 등) | CI `analysis` |
@@ -97,19 +97,19 @@ IPv6 미지원, UDP 포트 기준의 신뢰 경계 부재, 클러스터 재측�
 
 ```bash
 # 1) eBPF 빌드 + 단위 테스트 (Linux, clang/libbpf-dev/linux-libc-dev/bpftool, root)
-make -C step6-ebpf && make -C step6-ebpf tools
-sudo make -C step6-ebpf test          # 26 BPF_PROG_TEST_RUN
-sudo make -C step6-ebpf test-tcx      # kernel >= 6.6
+make -C bpf && make -C bpf tools
+sudo make -C bpf test          # 26 BPF_PROG_TEST_RUN
+sudo make -C bpf test-tcx      # kernel >= 6.6
 
 # 2) netns 테스트베드 (sch_tbf/sch_prio 가 있는 커널이면 경합 실험, 없으면 기능 검증 모드)
-sudo bash testbed/run_testbed.sh --runs 3 --rate-mbps 20 --flood-mbps 30 --out testbed/runs/local
+sudo bash testbed/run.sh --runs 3 --rate-mbps 20 --flood-mbps 30 --out testbed/runs/local
 
 # 3) 분석
 python -m pip install -e ./analysis
 tsn-analysis summary testbed/runs/local --baseline fifo --markdown - && tsn-analysis plot testbed/runs/local --out figs
 
 # 4) Kubernetes/Cilium 클러스터 (VM 2대) — docs/RUNBOOK.md
-cp experiment.env.example experiment.env && sudo bash deploy-experiment.sh build-ebpf && sudo bash deploy-experiment.sh matrix 3
+cp experiment.env.example experiment.env && sudo bash scripts/experiment.sh build-ebpf && sudo bash scripts/experiment.sh matrix 3
 ```
 
 CI 가 같은 일을 매 push 마다 한다(`.github/workflows/`). Windows 에서는 WSL2 로 1)–3) 이 돈다(셰이퍼 없이).
@@ -117,20 +117,21 @@ CI 가 같은 일을 매 push 마다 한다(`.github/workflows/`). Windows 에�
 ## 저장소 구조
 
 ```
-step6-ebpf/        ts_classifier.c · prio_probe.c · tcx_dummy_ok.c · tools/tcx_attach.c · tests/ (BPF_PROG_TEST_RUN, tcx chain)
-testbed/           topology.sh · run_testbed.sh · be_flood.py · udp_sink.py · bpfmaps.py
-step7-experiment/  talker.py · listener.py · k8s/ (kustomize, 조건별 Job/DaemonSet 템플릿)
-deploy-experiment.sh · verify-experiment.sh · experiment.env.example   K8s 오케스트레이션 (HTB 병목 + BE 홍수 + tcx attach)
-analysis/          tsn_analysis (loader/metrics/stats/plots/report/cli) + tests
-results/testbed/   CI 실측 (CSV, meta.json, report)      step8-measurement/results/  2026-05 K8s 데이터 (재해석용)
-docs/              ARCHITECTURE · RESULTS · LIMITATIONS · VERIFICATION · DATA_PROVENANCE · PAPER_MAPPING · AIDC_RELEVANCE · RUNBOOK · adr/
-step2..5-*/        환경 설치·qdisc 참고 스크립트 (mqprio/ETF/taprio 는 REFERENCE ONLY)
-.github/workflows/ ci.yml (lint · bpf · analysis) · testbed.yml (실험 → 아티팩트)
+bpf/            eBPF: src/{ts_classifier,prio_probe,tcx_dummy_ok}.c · tools/tcx_attach.c · tests/ (BPF_PROG_TEST_RUN, tcx chain) · Makefile
+workload/       talker.py · listener.py · be_flood.py · udp_sink.py   (테스트베드와 K8s 가 같은 파일을 사용)
+testbed/        topology.sh · run.sh · bpfmaps.py                     (단일 호스트 netns 테스트베드)
+k8s/            kustomization.yaml · listener/udp-sink · talker-job/be-flood-job/stress-daemonset 템플릿
+scripts/        experiment.sh (K8s 오케스트레이션) · verify.sh · hubble-monitor.sh · setup/ (VM 설치) · qdisc-reference/ (mqprio/ETF/taprio, 참고용) · ci/
+analysis/       tsn_analysis 패키지 (loader/metrics/stats/plots/report/cli) + tests
+results/        testbed/ (CI 실측: CSV · meta.json · report) · k8s-2026-05/ (5월 K8s 데이터 + 그래프, 재해석용)
+docs/           ARCHITECTURE · RESULTS · LIMITATIONS · VERIFICATION · DATA_PROVENANCE · PAPER_MAPPING · AIDC_RELEVANCE · RUNBOOK · adr/
+.github/        ci.yml (lint · bpf · analysis) · testbed.yml (실험 → 아티팩트)
+Makefile · experiment.env.example · CHANGELOG.md · LICENSE
 ```
 
 ## 로드맵
 
-1. VM 클러스터에서 `deploy-experiment.sh matrix` 실행 → `results/k8s/` (veth 리셋·DSCP 를 Cilium 경로에서 재확인)
+1. VM 클러스터에서 `scripts/experiment.sh matrix` 실행 → `results/k8s/` (veth 리셋·DSCP 를 Cilium 경로에서 재확인)
 2. 출발지 identity 기반 분류(신뢰 경계), IPv6 Traffic Class
 3. 물리 NIC: `mqprio hw`, XPS/IRQ affinity, isolcpus, 하드웨어 PTP + `SO_TIMESTAMPING`
 4. 스위치 QoS(trust DSCP, strict-priority 큐)와 RoCE/PFC 클래스 공존 실험

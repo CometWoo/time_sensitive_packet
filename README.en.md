@@ -26,7 +26,7 @@ reproduction could not have worked, then redesigning and verifying it.
 
 ## Redesign (v2)
 
-- `step6-ebpf/src/ts_classifier.c` — classifier at the **host physical NIC egress** (just before the qdisc):
+- `bpf/src/ts_classifier.c` — classifier at the **host physical NIC egress** (just before the qdisc):
   AVTP EtherType / 802.1Q·802.1ad outer PCP ≥ 5 / IPv4-UDP destination port (compile-time 6000 + runtime map)
   → `skb->priority = 6`; non-TS packets untouched; IP fragments ignored; optional **DSCP EF marking** with
   incremental IPv4 checksum update; per-CPU counters; returns `TC_ACT_UNSPEC` so Cilium still runs.
@@ -36,7 +36,7 @@ reproduction could not have worked, then redesigning and verifying it.
   classifier counters, receiver-side DSCP (`IP_RECVTOS`) and kernel RX timestamps.
 - `analysis/` — `tsn-analysis`: linear percentiles, bootstrap CIs, Mann-Whitney U, Cliff's δ, loss/dup/reorder,
   throughput from timestamps, plots and Markdown/JSON reports (65 tests).
-- K8s orchestration (`deploy-experiment.sh`, kustomize manifests): HTB bottleneck class keyed on the listener
+- K8s orchestration (`scripts/experiment.sh`, kustomize manifests): HTB bottleneck class keyed on the listener
   IP, BE flood Job, condition names shared with the testbed, per-run metadata. **Not yet executed on the
   cluster** (no VM access at the time of writing).
 
@@ -70,9 +70,9 @@ Mapping table and hardware roadmap: [docs/AIDC_RELEVANCE.md](docs/AIDC_RELEVANCE
 ## Quick start
 
 ```bash
-make -C step6-ebpf && make -C step6-ebpf tools
-sudo make -C step6-ebpf test && sudo make -C step6-ebpf test-tcx      # kernel >= 6.6 for test-tcx
-sudo bash testbed/run_testbed.sh --runs 3 --rate-mbps 20 --flood-mbps 30 --out testbed/runs/local
+make -C bpf && make -C bpf tools
+sudo make -C bpf test && sudo make -C bpf test-tcx      # kernel >= 6.6 for test-tcx
+sudo bash testbed/run.sh --runs 3 --rate-mbps 20 --flood-mbps 30 --out testbed/runs/local
 python -m pip install -e ./analysis && tsn-analysis summary testbed/runs/local --baseline fifo --markdown -
 ```
 

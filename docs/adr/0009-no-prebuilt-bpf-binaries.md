@@ -14,11 +14,11 @@
 
 ## 결정
 
-- `step6-ebpf/build/` 는 `.gitignore`. 소스와 `Makefile`(`-Wall -Werror`)만 커밋한다.
+- `bpf/build/` 는 `.gitignore`. 소스와 `Makefile`(`-Wall -Werror`)만 커밋한다.
 - GitHub Actions `ci.yml` 이 매 push 마다 clang 18 로 빌드하고, **커널 verifier 로드**
   (`bpftool prog load`), **BPF_PROG_TEST_RUN 단위 테스트 24개**, kernel ≥ 6.6 러너에서
   **tcx 체인 통합 테스트**까지 통과시킨 뒤 `.bpf.o` 와 `tcx_attach` 를 아티팩트로 올린다.
-- 클러스터 노드에는 `clang llvm libbpf-dev linux-libc-dev` 를 설치한다(`step2-os-setup/02`).
+- 클러스터 노드에는 `clang llvm libbpf-dev linux-libc-dev` 를 설치한다(`scripts/setup/02`).
   빌드 도구를 못 놓는 노드는 CI 아티팩트를 받아 쓴다.
 
 ## 왜 뒤집었나

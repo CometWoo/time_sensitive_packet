@@ -17,7 +17,7 @@
 | 시계 | 송수신 같은 `CLOCK_REALTIME` → 절대 one-way latency 유효 |
 | 알려진 결함 | 이 run 의 listener 는 사용자 공간 타임스탬프(커널 RX 스탬프 아님); run 순서 미순환 |
 
-## B. `step8-measurement/results/*.csv` — 2026-05-25, VirtualBox 2-VM K8s (메커니즘 미작동, 재해석용)
+## B. `results/k8s-2026-05/*.csv` — 2026-05-25, VirtualBox 2-VM K8s (메커니즘 미작동, 재해석용)
 
 | 파일 | 송신 구간 | 실효 pkt/s | 송신 간격 p50 / p99 (ms) | raw latency 음수 비율 | p1 오프셋 (ms) | run 내 드리프트 |
 |---|---|---|---|---|---|---|

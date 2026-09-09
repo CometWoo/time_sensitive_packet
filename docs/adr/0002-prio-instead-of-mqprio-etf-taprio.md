@@ -24,7 +24,7 @@ CLOCK_TAI txtime, Δ=150 μs) + ETS 게이트 스케줄(125/125/750 μs, 1 ms �
 
 - 우선순위 dequeue 라는 **의도**만 보존하는 소프트웨어 strict-priority qdisc 를 쓴다:
   `prio bands 3`(기본 priomap) 또는 커널 내장 `pfifo_fast`(같은 priomap, 모듈 불필요).
-- ETF/taprio/mqprio 스크립트는 `step5-tc-qdisc/` 에 **참고용(REFERENCE ONLY)** 으로 남기고 메인
+- ETF/taprio/mqprio 스크립트는 `scripts/qdisc-reference/` 에 **참고용(REFERENCE ONLY)** 으로 남기고 메인
   경로에서 호출하지 않는다. 각 스크립트 머리에 위 실패 사유를 적었다.
 - ETF 를 실제로 쓰려면 talker 가 패킷마다 `SCM_TXTIME` 으로 미래 송신 시각을 지정해야 하고
   (`SO_TXTIME` + `CLOCK_TAI`), 그 시각이 의미 있으려면 PTP 동기 + LaunchTime 지원 NIC 가 필요하다.

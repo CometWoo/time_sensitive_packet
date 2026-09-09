@@ -20,9 +20,8 @@ on:
   pull_request:
     paths:
       - "testbed/**"
-      - "step6-ebpf/**"
-      - "step7-experiment/talker/**"
-      - "step7-experiment/listener/**"
+      - "bpf/**"
+      - "workload/**"
       - ".github/workflows/testbed.yml"
 
 permissions:
@@ -38,11 +37,11 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq clang llvm make gcc pkg-config libbpf-dev linux-libc-dev iproute2 ethtool python3-numpy python3-scipy python3-matplotlib
-          bash ci/install-bpftool.sh
+          bash scripts/ci/install-bpftool.sh
           sudo modprobe sch_tbf sch_prio sch_fq_codel cls_bpf act_bpf 2>/dev/null || true
           uname -r
       - name: build eBPF
-        run: make -C step6-ebpf
+        run: make -C bpf
       - name: run testbed
         env:
           RUNS: ${{ github.event.inputs.runs || '3' }}
@@ -51,7 +50,7 @@ jobs:
           COUNT: ${{ github.event.inputs.count || '10000' }}
         run: |
           mkdir -p testbed/runs
-          sudo -E env "PATH=$PATH" bash testbed/run_testbed.sh \
+          sudo -E env "PATH=$PATH" bash testbed/run.sh \
             --runs "$RUNS" --rate-mbps "$RATE" --flood-mbps "$FLOOD" --count "$COUNT" \
             --out testbed/runs/ci 2>&1 | tee testbed/runs/ci-log.txt
           sudo chown -R "$(id -u):$(id -g)" testbed/runs

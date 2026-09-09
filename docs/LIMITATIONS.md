@@ -39,12 +39,12 @@
 
 ## 4. Cilium / Kubernetes 경로 — **클러스터에서 재측정되지 않음**
 
-- 새 설계(호스트 NIC egress, tcx BEFORE, HTB 병목 + BE 홍수)는 `deploy-experiment.sh` 로 구현했지만
+- 새 설계(호스트 NIC egress, tcx BEFORE, HTB 병목 + BE 홍수)는 `scripts/experiment.sh` 로 구현했지만
   현재 VM 클러스터에 접근할 수 없어 **실제 Cilium 환경에서 실행하지 못했다.** 검증된 것은:
   netns 테스트베드(kernel 5.15 WSL2, 6.17 CI 러너)에서의 동작과, CI 의 tcx 체인 테스트뿐이다.
 - Cilium 의 `cil_to_netdev` 가 우리 프로그램 뒤에서 실행될 때의 상호작용(예: Cilium 이 skb 를
   재작성해 우리가 찍은 DSCP 가 encap 바깥으로 복사되는지 — native routing 에선 encap 없음)은 추론이다.
-- Cilium agent 재시작 시 tcx 체인 순서가 바뀔 가능성: `verify-experiment.sh` 가 `tcx_attach query` 로
+- Cilium agent 재시작 시 tcx 체인 순서가 바뀔 가능성: `scripts/verify.sh` 가 `tcx_attach query` 로
   순서를 확인하도록 했지만 실제로 재현하지 못했다.
 - VirtualBox NAT 네트워크가 DSCP 를 보존하는지도 미검증(테스트베드는 호스트 내부).
 

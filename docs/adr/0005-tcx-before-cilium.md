@@ -47,7 +47,7 @@ tcx 체인 안에서도 규칙은 같다: 앞 프로그램이 `TCX_NEXT` 를 반
 
 ## 검증
 
-- `step6-ebpf/tests/test_tcx_chain.sh` (kernel ≥ 6.6, CI ubuntu-24.04):
+- `bpf/tests/test_tcx_chain.sh` (kernel ≥ 6.6, CI ubuntu-24.04):
   - Phase A: `tcx_dummy_ok`(OK 반환, Cilium 흉내) + legacy clsact `ts_classifier` → 분류기 카운터 0
   - Phase B: `ts_classifier` 를 BEFORE 로 → 둘 다 실행
 - BPF_PROG_TEST_RUN 단위 테스트가 반환값 `TC_ACT_UNSPEC` 을 고정한다.

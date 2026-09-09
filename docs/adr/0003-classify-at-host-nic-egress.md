@@ -76,8 +76,8 @@ NIC 로 넘어온 패킷도 같은 `__dev_queue_xmit(NIC)` 경로를 타므로 �
 
 ## 결과
 
-- `step6-ebpf/src/ts_classifier.c`, `tools/tcx_attach.c`, `testbed/` 로 구현·검증.
-- K8s 경로 `deploy-experiment.sh` 는 sender 노드 NIC 에 attach 하도록 재작성.
+- `bpf/src/ts_classifier.c`, `tools/tcx_attach.c`, `testbed/` 로 구현·검증.
+- K8s 경로 `scripts/experiment.sh` 는 sender 노드 NIC 에 attach 하도록 재작성.
 - 논문 Fig.1 의 "vef(veth 필터)" 는 이 저장소에서 **의도적으로 구현하지 않는다** — vef 의 역할
   (overlay 우회) 은 Cilium native routing 에서 이미 무의미하고, priority 설정은 veth 뒤에서만
   유효하기 때문이다.

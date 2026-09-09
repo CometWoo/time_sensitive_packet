@@ -9,15 +9,15 @@
 
 | 이 저장소 | 패브릭(AIDC)에서의 대응 | 검증 수준 | 파일 |
 |---|---|---|---|
-| `skb->priority` (호스트 내부 메타데이터) | 없음 — NIC 를 떠나면 소실. 호스트 안의 큐 선택에만 유효 | 실측 (veth 통과 시 0 리셋 포함) | `step6-ebpf/src/ts_classifier.c`, `prio_probe.c` |
+| `skb->priority` (호스트 내부 메타데이터) | 없음 — NIC 를 떠나면 소실. 호스트 안의 큐 선택에만 유효 | 실측 (veth 통과 시 0 리셋 포함) | `bpf/src/ts_classifier.c`, `prio_probe.c` |
 | **DSCP EF(46) 마킹** + IPv4 체크섬 증분 갱신 | ToR/스파인의 `trust dscp` → 스위치 egress 큐(strict priority / WRR) 매핑. RoCEv2 는 보통 DSCP 26/AF31 + PFC 클래스 3, 제어 트래픽은 EF/CS6 | 실측 end-to-end (수신 TOS 0xB8 30,000/30,000) | `ts_classifier.c` `mark_dscp()`, `listener.py --record-tos` |
 | 802.1Q PCP 판별 | L2 QoS(PCP → 스위치 큐), PFC 우선순위 클래스의 기준 | 인라인 태그 단위 테스트 | `ts_classifier.c` `classify()` |
-| `prio` / `pfifo_fast` strict-priority 밴드 | NIC 하드웨어 TX 큐 + 스위치 egress strict-priority 큐 (DCB ETS 의 "strict" 그룹) | 실측 (CI 러너, 경합 하 p50 433 ms → 0.05 ms) | `testbed/run_testbed.sh` |
+| `prio` / `pfifo_fast` strict-priority 밴드 | NIC 하드웨어 TX 큐 + 스위치 egress strict-priority 큐 (DCB ETS 의 "strict" 그룹) | 실측 (CI 러너, 경합 하 p50 433 ms → 0.05 ms) | `testbed/run.sh` |
 | `fq_codel` 흐름 격리 | 스위치의 흐름 단위 공정성은 없다(큐 단위) — 호스트 AQM 과 패브릭 QoS 의 차이 | 실측 (p99 0.73 ms, 손실 0) | 같음 |
-| tbf/HTB 병목 + BE 홍수 | 집단 통신(all-reduce)의 대량 흐름과 제어/스케줄러 트래픽의 경합. 짧은 패킷의 꼬리 지연이 곧 straggler | 실측 (테스트베드) | `testbed/be_flood.py` |
+| tbf/HTB 병목 + BE 홍수 | 집단 통신(all-reduce)의 대량 흐름과 제어/스케줄러 트래픽의 경합. 짧은 패킷의 꼬리 지연이 곧 straggler | 실측 (테스트베드) | `workload/be_flood.py` |
 | p99 / p99.9 꼬리 지연 | 분산 학습에서 한 랭크의 지연이 전체 스텝을 잡는다(straggler). 평균이 아니라 꼬리가 SLO | 통계 패키지 | `analysis/` |
 | tcx 체인 순서 (`BPF_F_BEFORE`, `TCX_NEXT`) | CNI 데이터패스(Cilium)와 사용자 BPF 의 공존 — 관측/QoS 훅을 넣을 때 필수 지식 | CI 통합 테스트 (kernel 6.17) | `tools/tcx_attach.c`, `tests/test_tcx_chain.sh` |
-| 1 TX 큐 VM, 격리 없음 | 실제 서버: 멀티큐 NIC + RSS/XPS + IRQ affinity + isolcpus/nohz_full 로 데이터플레인 코어 분리 | 미검증 (하드웨어 없음) | `step2-os-setup/03-configure-isolcpus.sh` (참고) |
+| 1 TX 큐 VM, 격리 없음 | 실제 서버: 멀티큐 NIC + RSS/XPS + IRQ affinity + isolcpus/nohz_full 로 데이터플레인 코어 분리 | 미검증 (하드웨어 없음) | `scripts/setup/isolcpus.sh` (참고) |
 | 소프트웨어 시계, p1 정규화 | 하드웨어 PTP(PHC) + `SO_TIMESTAMPING` 으로 ns 급 one-way 측정 | 미검증 | [ADR-0012](adr/0012-clock-skew-and-same-host-testbed.md) |
 | ETF / taprio (미사용) | TSN 802.1Qbv 게이트, NIC LaunchTime — 산업/차량용. AIDC 에선 드묾 | 실패 기록 | [ADR-0002](adr/0002-prio-instead-of-mqprio-etf-taprio.md) |
 
@@ -42,7 +42,7 @@
 
 | 단계 | 내용 | 필요한 것 |
 |---|---|---|
-| R1 | 클러스터(VM) 재측정: `deploy-experiment.sh matrix` (HTB + BE 홍수, 5 조건 × CPU 부하 × ≥5 run) | VM 2대 접근 |
+| R1 | 클러스터(VM) 재측정: `scripts/experiment.sh matrix` (HTB + BE 홍수, 5 조건 × CPU 부하 × ≥5 run) | VM 2대 접근 |
 | R2 | 스위치 측 QoS: `trust dscp`, EF → strict-priority 큐, RoCE 클래스와 분리, ECN 마킹 임계 | 실 스위치 또는 SONiC VS |
 | R3 | 멀티큐 NIC 에서 `mqprio hw 1` 로 TC ↔ 하드웨어 큐 매핑, XPS/IRQ affinity, `isolcpus` | 물리 서버 |
 | R4 | 하드웨어 PTP + `SO_TIMESTAMPING`(TX/RX 하드웨어 스탬프) 로 ns 급 one-way latency | PHC 지원 NIC |
