@@ -1,0 +1,14 @@
+# Linux 대상 저장소: 셸/파이썬/C/YAML 은 항상 LF (WSL·VM 에서 그대로 실행되도록)
+* text=auto
+*.sh text eol=lf
+*.py text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.env.example text eol=lf
+Makefile text eol=lf
+*.png binary
+*.csv text eol=lf

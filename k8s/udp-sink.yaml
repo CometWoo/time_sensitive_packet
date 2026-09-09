@@ -1,0 +1,79 @@
+# udp-sink.yaml — best-effort 홍수(be_flood)를 받아서 버리는 싱크 (Host-r = worker 노드)
+#
+# 왜 필요한가: 아무도 듣지 않는 포트로 UDP 를 쏟으면 수신 커널이 패킷마다 ICMP port-unreachable
+#   을 되돌려 역방향 트래픽과 CPU 를 만든다 (workload/udp_sink.py 와 같은 이유).
+# 배치: listener 와 같은 노드(수신 노드). sender NIC 의 HTB u32 필터는 listener Pod IP 와
+#   이 Pod IP 두 개를 class 1:10 으로 보내므로 TS 흐름과 BE 홍수가 같은 병목 큐를 공유한다.
+# 준비 상태: udp_sink.py 는 ready-file 이 없어서 readinessProbe 가 "포트가 이미 점유됐는가" 를
+#   bind 시도로 확인한다 (EADDRINUSE 면 싱크가 떠 있는 것 → exit 0).
+# env: BE_PORT 는 deploy-k8s 가 experiment.env 값으로 `kubectl set env` 한다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: udp-sink
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: udp-sink
+  template:
+    metadata:
+      labels:
+        app: udp-sink
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: DoesNotExist
+      containers:
+        - name: udp-sink
+          image: python:3.11-slim
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - exec python3 /app/udp_sink.py --port "${BE_PORT:-5001}"
+          env:
+            - name: BE_PORT
+              value: "5001"
+          ports:
+            - name: be-udp
+              containerPort: 5001
+              protocol: UDP
+          readinessProbe:
+            exec:
+              command:
+                - python3
+                - -c
+                - |
+                  import errno, os, socket, sys
+                  s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                  try:
+                      s.bind(("0.0.0.0", int(os.environ.get("BE_PORT", "5001"))))
+                  except OSError as e:
+                      sys.exit(0 if e.errno == errno.EADDRINUSE else 1)
+                  sys.exit(1)   # bind 성공 = 아직 아무도 듣지 않음
+            initialDelaySeconds: 1
+            periodSeconds: 2
+          volumeMounts:
+            - name: script
+              mountPath: /app
+              readOnly: true
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "64Mi"
+            limits:
+              memory: "128Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: script
+          configMap:
+            name: udp-sink-script

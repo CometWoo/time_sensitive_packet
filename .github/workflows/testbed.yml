@@ -1,0 +1,76 @@
+name: testbed
+
+# netns 테스트베드 실험을 CI 러너(ubuntu-24.04, kernel 6.x, sch_tbf/sch_prio 있음)에서 실행하고
+# CSV/메타/그래프/리포트를 아티팩트로 남긴다. 결과는 repo 의 results/testbed/ 에 수동 커밋한다.
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "조건당 반복 횟수"
+        default: "3"
+      rate_mbps:
+        description: "병목 링크 속도 (Mbit/s)"
+        default: "20"
+      flood_mbps:
+        description: "best-effort 제공 부하 (Mbit/s)"
+        default: "30"
+      count:
+        description: "TS 패킷 수 (1 ms 간격)"
+        default: "10000"
+  pull_request:
+    paths:
+      - "testbed/**"
+      - "bpf/**"
+      - "workload/**"
+      - ".github/workflows/testbed.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  testbed:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang llvm make gcc pkg-config libbpf-dev linux-libc-dev iproute2 ethtool python3-numpy python3-scipy python3-matplotlib
+          bash scripts/ci/install-bpftool.sh
+          sudo modprobe sch_tbf sch_prio sch_fq_codel cls_bpf act_bpf 2>/dev/null || true
+          uname -r
+      - name: build eBPF
+        run: make -C bpf
+      - name: run testbed
+        env:
+          RUNS: ${{ github.event.inputs.runs || '3' }}
+          RATE: ${{ github.event.inputs.rate_mbps || '20' }}
+          FLOOD: ${{ github.event.inputs.flood_mbps || '30' }}
+          COUNT: ${{ github.event.inputs.count || '10000' }}
+        run: |
+          mkdir -p testbed/runs
+          sudo -E env "PATH=$PATH" bash testbed/run.sh \
+            --runs "$RUNS" --rate-mbps "$RATE" --flood-mbps "$FLOOD" --count "$COUNT" \
+            --out testbed/runs/ci 2>&1 | tee testbed/runs/ci-log.txt
+          sudo chown -R "$(id -u):$(id -g)" testbed/runs
+      - name: analysis report
+        run: |
+          python -m pip install -q -e ./analysis
+          tsn-analysis summary testbed/runs/ci --baseline fifo \
+            --markdown testbed/runs/ci/report.md --json testbed/runs/ci/summary.json
+          tsn-analysis plot testbed/runs/ci --out testbed/runs/ci/figures
+          {
+            echo "## netns testbed — kernel $(uname -r)"
+            cat testbed/runs/ci/report.md
+            echo
+            echo '### priority histogram / classifier counters (run 1)'
+            for m in testbed/runs/ci/*_run1.meta.json; do
+              echo "- $(basename "$m"): $(python -c "import json,sys; d=json.load(open('$m')); print('after_veth=', {k:v for k,v in d['prio_hist_after_veth_ingress'].items() if v}, 'nic_egress=', {k:v for k,v in d['prio_hist_at_nic_egress'].items() if v}, 'clsf=', d['ts_counters'])")"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: testbed-results-${{ github.run_number }}
+          path: testbed/runs/

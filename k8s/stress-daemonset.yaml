@@ -1,0 +1,62 @@
+# stress-daemonset.yaml — CPU 부하 생성기 (선택 축)  ★ 템플릿
+#
+# scripts/experiment.sh run <condition> <cpu%> 의 cpu% > 0 일 때만 적용된다. __PLACEHOLDER__ 치환:
+#   __CPU_LOAD__            stress-ng --cpu-load (워커당 %)
+#   __STRESS_WORKERS__      stress-ng --cpu N (워커 수). 부하는 "N 개 코어의 P%" 이지 머신 전체 P% 가
+#                           아니다 — 4 vCPU 에서 --cpu 2 --cpu-load 50 은 머신 기준 ~25% 이다.
+#   __STRESS_TIMEOUT_S__    안전 타임아웃 (run 이 끝나면 스크립트가 DaemonSet 을 지운다)
+#   __STRESS_AFFINITY_KEY__ / __STRESS_AFFINITY_OP__   배치 (experiment.env STRESS_NODES):
+#       receiver : key node-role.kubernetes.io/control-plane, DoesNotExist → worker(수신) 노드만
+#       all      : key kubernetes.io/os, Exists                          → 모든 노드
+#   receiver 가 기본인 이유: sender/control-plane 에 부하를 주면 kube-apiserver·CoreDNS·talker
+#   페이싱이 함께 흔들려 "수신 호스트 CPU 경쟁" 과 "송신기 CPU 기아" 를 구분할 수 없다. 논문처럼
+#   양쪽 호스트에 부하를 주고 싶으면 STRESS_NODES=all.
+# toleration: control-plane taint 를 허용해 두되, receiver 모드는 affinity 가 control-plane 을 제외한다.
+# 이미지: IfNotPresent — 노드에 이미 있는 이미지를 쓴다 (:latest 라도 rollout 마다 pull 하지 않는다).
+#   재현성을 위해 digest 고정을 권장한다 (experiment.env IMAGE_STRESS).
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: cpu-stress
+spec:
+  selector:
+    matchLabels:
+      app: cpu-stress
+  template:
+    metadata:
+      labels:
+        app: cpu-stress
+    spec:
+      tolerations:
+        - operator: Exists
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: __STRESS_AFFINITY_KEY__
+                    operator: __STRESS_AFFINITY_OP__
+      containers:
+        - name: stress
+          image: __IMAGE_STRESS__
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--cpu"
+            - "__STRESS_WORKERS__"
+            - "--cpu-load"
+            - "__CPU_LOAD__"
+            - "--cpu-method"
+            - "matrixprod"
+            - "--timeout"
+            - "__STRESS_TIMEOUT_S__s"
+            - "--metrics-brief"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "32Mi"
+            limits:
+              memory: "128Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

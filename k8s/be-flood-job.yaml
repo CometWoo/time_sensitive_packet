@@ -1,0 +1,81 @@
+# be-flood-job.yaml — best-effort UDP 홍수 Job (Host-s = control-plane/sender 노드)  ★ 템플릿
+#
+# 목적: sender NIC 의 병목 class(HTB 1:10, SHAPE_MBPS) 에 지속적인 backlog 를 만든다. 경쟁
+#   트래픽 없이 TS 흐름 하나만 흘리면 어떤 qdisc 든 큐가 비어 있어 prio 와 fq_codel 의 차이가
+#   나올 수 없다 (workload/be_flood.py 헤더, docs/adr/0006). 제공 부하(FLOOD_MBPS)는
+#   SHAPE_MBPS 보다 커야 한다.
+# 목적지: udp-sink Pod IP (수신 노드). u32 필터가 이 IP 도 class 1:10 으로 보낸다.
+# 지속 시간: scripts/experiment.sh 가 TS 송신 시간 + 8 s 로 계산해 넣는다 (talker 보다 2 s 먼저
+#   시작해 큐가 찬 상태에서 TS 송신이 시작되게 한다).
+# QoS: 30 Mbit/s @ 1400 B ≈ 2700 pkt/s 의 파이썬 페이싱 루프 — request __FLOOD_CPU_REQUEST__(기본 500m),
+#   limit 없음(Burstable). talker(Guaranteed 1 CPU) 와 같은 노드에 있으므로 4 vCPU 이상을 권장하고,
+#   2 vCPU 노드에서는 experiment.env 의 FLOOD_CPU_REQUEST/TALKER_CPU_REQUEST 를 줄인다.
+# __PLACEHOLDER__ 는 scripts/experiment.sh run 이 치환한다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: be-flood
+  labels:
+    app: be-flood
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: __FLOOD_DEADLINE_S__
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: be-flood
+    spec:
+      restartPolicy: Never
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      containers:
+        - name: be-flood
+          image: __IMAGE_PY__
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              python3 /app/be_flood.py \
+                --target "${BE_TARGET:?BE_TARGET (udp-sink Pod IP) is required}" \
+                --port "${BE_PORT:-5001}" --rate-mbps "${FLOOD_MBPS:-30}" \
+                --size "${FLOOD_SIZE:-1400}" --duration "${FLOOD_DURATION_S:-18}" \
+                --stats-file /tmp/flood.json
+              rc=$?
+              echo "### FLOOD_STATS_BEGIN"
+              cat /tmp/flood.json 2>/dev/null; echo
+              echo "### FLOOD_STATS_END"
+              exit $rc
+          env:
+            - name: BE_TARGET
+              value: "__BE_TARGET__"
+            - name: BE_PORT
+              value: "__BE_PORT__"
+            - name: FLOOD_MBPS
+              value: "__FLOOD_MBPS__"
+            - name: FLOOD_SIZE
+              value: "__FLOOD_SIZE__"
+            - name: FLOOD_DURATION_S
+              value: "__FLOOD_DURATION_S__"
+          volumeMounts:
+            - name: script
+              mountPath: /app
+              readOnly: true
+          resources:
+            requests:
+              cpu: "__FLOOD_CPU_REQUEST__"
+              memory: "64Mi"
+            limits:
+              memory: "128Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: script
+          configMap:
+            name: be-flood-script

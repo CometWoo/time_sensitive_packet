@@ -1,0 +1,11 @@
+qdisc tbf 1: root refcnt 5 rate 20Mbit burst 4Kb lat 200ms 
+ Sent 40027002 bytes 36581 pkt (dropped 6462, overlimits 117558 requeues 0) 
+ backlog 14156114b 9817p requeues 0
+qdisc fq_codel 10: parent 1:1 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms memory_limit 32Mb ecn drop_batch 64 
+ Sent 40028444 bytes 36582 pkt (dropped 6462, overlimits 0 requeues 0) 
+ backlog 14156114b 9817p requeues 0
+  maxpacket 1442 drop_overlimit 0 new_flow_count 9995 ecn_mark 0 memory_used 22616064
+  new_flows_len 0 old_flows_len 1
+qdisc clsact ffff: parent ffff:fff1 
+ Sent 444509442 bytes 370021 pkt (dropped 0, overlimits 0 requeues 0) 
+ backlog 0b 0p requeues 0

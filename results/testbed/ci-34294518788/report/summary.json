@@ -1,0 +1,919 @@
+{
+  "results_dir": "results\\testbed\\ci-34294518788\\ci",
+  "normalize_skew": false,
+  "percentile_method": "linear",
+  "baseline": "fifo",
+  "conditions": [
+    "fifo",
+    "fq_codel",
+    "pfifo_fast_clsf",
+    "pfifo_fast_noclsf",
+    "prio_clsf"
+  ],
+  "factors": [
+    {
+      "key": "all",
+      "label": "all runs",
+      "factors": {}
+    }
+  ],
+  "bootstrap": {
+    "n_boot": 2000,
+    "ci": 0.95,
+    "seed": 0
+  },
+  "cells": [
+    {
+      "condition": "fifo",
+      "factor": "all",
+      "factors": {},
+      "runs": [
+        "fifo_run1",
+        "fifo_run2",
+        "fifo_run3"
+      ],
+      "n_runs": 3,
+      "n_packets": 19444,
+      "clock_skew_ms": [
+        null,
+        null,
+        null
+      ],
+      "latency_ms": {
+        "n": 19444.0,
+        "min": 412.813721,
+        "p50": 431.3323805,
+        "p90": 440.3792212,
+        "p99": 543.7296836300001,
+        "p99.9": 573.3866374120003,
+        "max": 577.307998,
+        "mean": 434.28849288855173,
+        "std": 18.579348388069686
+      },
+      "jitter_us": {
+        "n": 19441.0,
+        "min": 18.44,
+        "p50": 365.294,
+        "p90": 1947.887,
+        "p99": 3123.0895999999984,
+        "p99.9": 6569.1078000000025,
+        "max": 9503.673,
+        "mean": 761.3355055809886,
+        "std": 786.9108792220909
+      },
+      "loss": {
+        "expected": 29995.0,
+        "received": 19444.0,
+        "unique": 19444.0,
+        "lost": 10551.0,
+        "duplicates": 0.0,
+        "reorders": 0.0,
+        "loss_pct": 35.17586264377396
+      },
+      "throughput_kbps": {
+        "mean": 674.2448445699679,
+        "per_run": [
+          672.8657638531148,
+          674.8183220409039,
+          675.0504478158849
+        ]
+      },
+      "inter_arrival_us": {
+        "n": 19441.0,
+        "min": 7.434,
+        "p50": 1228.565,
+        "p90": 2947.887,
+        "p99": 4123.089599999998,
+        "p99.9": 7569.1078000000025,
+        "max": 10503.673,
+        "mean": 1518.9710539581297,
+        "std": 964.1293953744471
+      },
+      "dscp": {
+        "dscp": {
+          "0": 19444
+        },
+        "ecn": {
+          "0": 19444
+        },
+        "tos": {
+          "0": 19444
+        },
+        "missing": 0,
+        "dominant_dscp": 0
+      },
+      "per_run": {
+        "latency_p99_ms": {
+          "stat": "p99",
+          "n_runs": 3,
+          "per_run": [
+            544.4693191399998,
+            543.0813955399998,
+            543.25265705
+          ],
+          "mean": 543.6011239099998,
+          "std": 0.7567396145622791,
+          "ci_low": 541.7212784954903,
+          "ci_high": 545.4809693245094,
+          "ci": 0.95
+        },
+        "jitter_p99_us": {
+          "stat": "p99",
+          "n_runs": 3,
+          "per_run": [
+            3139.114959999998,
+            3114.09212,
+            3141.8742000000016
+          ],
+          "mean": 3131.69376,
+          "std": 15.305771766284938,
+          "ci_low": 3093.6721151479283,
+          "ci_high": 3169.715404852072,
+          "ci": 0.95
+        }
+      }
+    },
+    {
+      "condition": "fq_codel",
+      "factor": "all",
+      "factors": {},
+      "runs": [
+        "fq_codel_run1",
+        "fq_codel_run2",
+        "fq_codel_run3"
+      ],
+      "n_runs": 3,
+      "n_packets": 30000,
+      "clock_skew_ms": [
+        null,
+        null,
+        null
+      ],
+      "latency_ms": {
+        "n": 30000.0,
+        "min": 0.04533,
+        "p50": 0.42342199999999997,
+        "p90": 0.6552983000000001,
+        "p99": 0.72657321,
+        "p99.9": 0.7661316030000023,
+        "max": 2.604488,
+        "mean": 0.42416482576666664,
+        "std": 0.17165021612097384
+      },
+      "jitter_us": {
+        "n": 29997.0,
+        "min": 12.285,
+        "p50": 237.23,
+        "p90": 368.0394,
+        "p99": 400.5937600000001,
+        "p99.9": 899.2758480000043,
+        "max": 3093.788,
+        "mean": 273.7656219955329,
+        "std": 79.75945696394912
+      },
+      "loss": {
+        "expected": 30000.0,
+        "received": 30000.0,
+        "unique": 30000.0,
+        "lost": 0.0,
+        "duplicates": 0.0,
+        "reorders": 0.0,
+        "loss_pct": 0.0
+      },
+      "throughput_kbps": {
+        "mean": 1024.073167479206,
+        "per_run": [
+          1024.0773404713148,
+          1024.0689089824439,
+          1024.0732529838592
+        ]
+      },
+      "inter_arrival_us": {
+        "n": 29997.0,
+        "min": 8.776,
+        "p50": 1203.727,
+        "p90": 1239.519,
+        "p99": 1269.421,
+        "p99.9": 1313.127376000006,
+        "max": 4093.788,
+        "mean": 1000.0285553555357,
+        "std": 285.1520375753153
+      },
+      "dscp": {
+        "dscp": {
+          "0": 30000
+        },
+        "ecn": {
+          "0": 30000
+        },
+        "tos": {
+          "0": 30000
+        },
+        "missing": 0,
+        "dominant_dscp": 0
+      },
+      "per_run": {
+        "latency_p99_ms": {
+          "stat": "p99",
+          "n_runs": 3,
+          "per_run": [
+            0.7218410799999999,
+            0.7335444,
+            0.72420357
+          ],
+          "mean": 0.7265296833333332,
+          "std": 0.006188701575066744,
+          "ci_low": 0.7111560963639413,
+          "ci_high": 0.7419032703027252,
+          "ci": 0.95
+        },
+        "jitter_p99_us": {
+          "stat": "p99",
+          "n_runs": 3,
+          "per_run": [
+            400.03942,
+            401.61462000000006,
+            399.8396
+          ],
+          "mean": 400.49788000000007,
+          "std": 0.9722721732107993,
+          "ci_low": 398.0826220284417,
+          "ci_high": 402.91313797155846,
+          "ci": 0.95
+        }
+      }
+    },
+    {
+      "condition": "pfifo_fast_clsf",
+      "factor": "all",
+      "factors": {},
+      "runs": [
+        "pfifo_fast_clsf_run1",
+        "pfifo_fast_clsf_run2",
+        "pfifo_fast_clsf_run3"
+      ],
+      "n_runs": 3,
+      "n_packets": 30000,
+      "clock_skew_ms": [
+        null,
+        null,
+        null
+      ],
+      "latency_ms": {
+        "n": 30000.0,
+        "min": 0.020372,
+        "p50": 0.048654,
+        "p90": 0.06829030000000003,
+        "p99": 0.16821705,
+        "p99.9": 0.21129778700001456,
+        "max": 2.483744,
+        "mean": 0.056069793533333336,
+        "std": 0.03851937299971338
+      },
+      "jitter_us": {
+        "n": 29997.0,
+        "min": 0.001,
+        "p50": 5.943,
+        "p90": 110.79560000000001,
+        "p99": 133.89800000000002,
+        "p99.9": 624.8799360000111,
+        "max": 2447.805,
+        "mean": 25.267066706670665,
+        "std": 52.828029299487156
+      },
+      "loss": {
+        "expected": 30000.0,
+        "received": 30000.0,
+        "unique": 30000.0,
+        "lost": 0.0,
+        "duplicates": 0.0,
+        "reorders": 0.0,
+        "loss_pct": 0.0
+      },
+      "throughput_kbps": {
+        "mean": 1024.1126217827166,
+        "per_run": [
+          1024.1084525730732,
+          1024.1067756254615,
+          1024.1226371496148
+        ]
+      },
+      "inter_arrival_us": {
+        "n": 29997.0,
+        "min": 9.068,
+        "p50": 999.938,
+        "p90": 1022.2200000000001,
+        "p99": 1126.54388,
+        "p99.9": 1240.7519840000703,
+        "max": 3447.805,
+        "mean": 999.9900289362268,
+        "std": 58.559768816664665
+      },
+      "dscp": {
+        "dscp": {
+          "46": 30000
+        },
+        "ecn": {
+          "0": 30000
+        },
+        "tos": {
+          "184": 30000
+        },
+        "missing": 0,
+        "dominant_dscp": 46
+      },
+      "per_run": {
+        "latency_p99_ms": {
+          "stat": "p99",
+          "n_runs": 3,
+          "per_run": [
+            0.16450228000000003,
+            0.16735096000000005,
+            0.17431400000000002
+          ],
+          "mean": 0.16872241333333338,
+          "std": 0.005047586108600157,
+          "ci_low": 0.15618351432765262,
+          "ci_high": 0.18126131233901413,
+          "ci": 0.95
+        },
+        "jitter_p99_us": {
+          "stat": "p99",
+          "n_runs": 3,
+          "per_run": [
+            119.59360000000004,
+            133.61436000000006,
+            142.3336000000001
+          ],
+          "mean": 131.84718666666674,
+          "std": 11.47253573507331,
+          "ci_low": 103.34782799776784,
+          "ci_high": 160.34654533556565,
+          "ci": 0.95
+        }
+      }
+    },
+    {
+      "condition": "pfifo_fast_noclsf",
+      "factor": "all",
+      "factors": {},
+      "runs": [
+        "pfifo_fast_noclsf_run1",
+        "pfifo_fast_noclsf_run2",
+        "pfifo_fast_noclsf_run3"
+      ],
+      "n_runs": 3,
+      "n_packets": 18311,
+      "clock_skew_ms": [
+        null,
+        null,
+        null
+      ],
+      "latency_ms": {
+        "n": 18311.0,
+        "min": 425.494014,
+        "p50": 433.153697,
+        "p90": 435.64589,
+        "p99": 538.8942712000006,
+        "p99.9": 566.8338310300006,
+        "max": 570.420982,
+        "mean": 436.04898285309383,
+        "std": 16.43204502498223
+      },
+      "jitter_us": {
+        "n": 18308.0,
+        "min": 9.088,
+        "p50": 788.4079999999999,
+        "p90": 881.9596,
+        "p99": 1958.5431,
+        "p99.9": 2536.4020670000127,
+        "max": 4265.064,
+        "mean": 676.6628613720778,
+        "std": 384.82832000220577
+      },
+      "loss": {
+        "expected": 29991.0,
+        "received": 18311.0,
+        "unique": 18311.0,
+        "lost": 11680.0,
+        "duplicates": 0.0,
+        "reorders": 0.0,
+        "loss_pct": 38.94501683838485
+      },
+      "throughput_kbps": {
+        "mean": 633.8002463463417,
+        "per_run": [
+          633.8357477545246,
+          633.4368146146767,
+          634.1281766698239
+        ]
+      },
+      "inter_arrival_us": {
+        "n": 18308.0,
+        "min": 6.672,
+        "p50": 1785.3705,
+        "p90": 1846.8619999999999,
+        "p99": 2958.5431,
+        "p99.9": 3536.4020670000127,
+        "max": 5265.064,
+        "mean": 1615.915862792222,
+        "std": 476.0434884354753
+      },
+      "dscp": {
+        "dscp": {
+          "0": 18311
+        },
+        "ecn": {
+          "0": 18311
+        },
+        "tos": {
+          "0": 18311
+        },
+        "missing": 0,
+        "dominant_dscp": 0
+      },
+      "per_run": {
+        "latency_p99_ms": {
+          "stat": "p99",
+          "n_runs": 3,
+          "per_run": [
+            538.3205836000001,
+            538.394113,
+            539.2608604
+          ],
+          "mean": 538.658519,
+          "std": 0.5229369128121683,
+          "ci_low": 537.359471694017,
+          "ci_high": 539.9575663059829,
+          "ci": 0.95
+        },
+        "jitter_p99_us": {
+          "stat": "p99",
+          "n_runs": 3,
+          "per_run": [
+            1957.62474,
+            1965.8023999999998,
+            1956.0883
+          ],
+          "mean": 1959.8384799999997,
+          "std": 5.221725604931699,
+          "ci_low": 1946.8669945043766,
+          "ci_high": 1972.8099654956227,
+          "ci": 0.95
+        }
+      }
+    },
+    {
+      "condition": "prio_clsf",
+      "factor": "all",
+      "factors": {},
+      "runs": [
+        "prio_clsf_run1",
+        "prio_clsf_run2",
+        "prio_clsf_run3"
+      ],
+      "n_runs": 3,
+      "n_packets": 30000,
+      "clock_skew_ms": [
+        null,
+        null,
+        null
+      ],
+      "latency_ms": {
+        "n": 30000.0,
+        "min": 0.015412,
+        "p50": 0.048974,
+        "p90": 0.06907530000000012,
+        "p99": 0.17911023999999995,
+        "p99.9": 0.3345552710000356,
+        "max": 2.967751,
+        "mean": 0.05784022563333333,
+        "std": 0.05053620997813305
+      },
+      "jitter_us": {
+        "n": 29997.0,
+        "min": 0.001,
+        "p50": 5.691,
+        "p90": 113.17340000000002,
+        "p99": 144.69152000000005,
+        "p99.9": 987.7170840000001,
+        "max": 5510.57,
+        "mean": 27.556575657565755,
+        "std": 79.75211110390613
+      },
+      "loss": {
+        "expected": 30000.0,
+        "received": 30000.0,
+        "unique": 30000.0,
+        "lost": 0.0,
+        "duplicates": 0.0,
+        "reorders": 0.0,
+        "loss_pct": 0.0
+      },
+      "throughput_kbps": {
+        "mean": 1024.1101968071296,
+        "per_run": [
+          1024.1105748573443,
+          1024.0981178165698,
+          1024.1218977474746
+        ]
+      },
+      "inter_arrival_us": {
+        "n": 29997.0,
+        "min": 6.122,
+        "p50": 999.869,
+        "p90": 1022.167,
+        "p99": 1134.8021999999999,
+        "p99.9": 1528.5259760000101,
+        "max": 6510.57,
+        "mean": 999.9923968396839,
+        "std": 84.37884418044864
+      },
+      "dscp": {
+        "dscp": {
+          "46": 30000
+        },
+        "ecn": {
+          "0": 30000
+        },
+        "tos": {
+          "184": 30000
+        },
+        "missing": 0,
+        "dominant_dscp": 46
+      },
+      "per_run": {
+        "latency_p99_ms": {
+          "stat": "p99",
+          "n_runs": 3,
+          "per_run": [
+            0.18640271000000003,
+            0.17068725,
+            0.17076766000000002
+          ],
+          "mean": 0.17595254000000002,
+          "std": 0.009050201998502582,
+          "ci_low": 0.15347059191656154,
+          "ci_high": 0.1984344880834385,
+          "ci": 0.95
+        },
+        "jitter_p99_us": {
+          "stat": "p99",
+          "n_runs": 3,
+          "per_run": [
+            149.94960000000003,
+            137.00880000000004,
+            133.35194
+          ],
+          "mean": 140.1034466666667,
+          "std": 8.720849033352971,
+          "ci_low": 118.43965670443319,
+          "ci_high": 161.76723662890024,
+          "ci": 0.95
+        }
+      }
+    }
+  ],
+  "comparisons": [
+    {
+      "condition": "fq_codel",
+      "factor": "all",
+      "baseline": "fifo",
+      "metrics": {
+        "latency_p50_ms": {
+          "stat": "p50",
+          "percentile_method": "linear",
+          "skew_percentile": null,
+          "baseline": {
+            "point": 431.3323805,
+            "low": 431.249238,
+            "high": 431.49404039999996,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "proposed": {
+            "point": 0.42342199999999997,
+            "low": 0.42014948750000003,
+            "high": 0.4265552125,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "improvement_pct": 99.90183394079777,
+          "mann_whitney_u": 583320000.0,
+          "p_value": 0.0,
+          "cliffs_delta": 1.0,
+          "effect": "large",
+          "n_baseline": 19444,
+          "n_proposed": 30000
+        },
+        "latency_p99_ms": {
+          "stat": "p99",
+          "percentile_method": "linear",
+          "skew_percentile": null,
+          "baseline": {
+            "point": 543.7296836300001,
+            "low": 538.78745167,
+            "high": 548.330928,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "proposed": {
+            "point": 0.72657321,
+            "low": 0.724870489,
+            "high": 0.72798306,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "improvement_pct": 99.86637234790102,
+          "mann_whitney_u": 583320000.0,
+          "p_value": 0.0,
+          "cliffs_delta": 1.0,
+          "effect": "large",
+          "n_baseline": 19444,
+          "n_proposed": 30000
+        },
+        "jitter_p99_us": {
+          "stat": "p99",
+          "percentile_method": "linear",
+          "skew_percentile": null,
+          "baseline": {
+            "point": 3123.0895999999984,
+            "low": 3112.734,
+            "high": 3654.6700399999877,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "proposed": {
+            "point": 400.5937600000001,
+            "low": 399.267908,
+            "high": 401.63704900000005,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "improvement_pct": 87.1731582725004,
+          "mann_whitney_u": 437388869.0,
+          "p_value": 0.0,
+          "cliffs_delta": 0.5000346767526572,
+          "effect": "large",
+          "n_baseline": 19441,
+          "n_proposed": 29997
+        }
+      }
+    },
+    {
+      "condition": "pfifo_fast_clsf",
+      "factor": "all",
+      "baseline": "fifo",
+      "metrics": {
+        "latency_p50_ms": {
+          "stat": "p50",
+          "percentile_method": "linear",
+          "skew_percentile": null,
+          "baseline": {
+            "point": 431.3323805,
+            "low": 431.249238,
+            "high": 431.49404039999996,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "proposed": {
+            "point": 0.048654,
+            "low": 0.0484944875,
+            "high": 0.048784025,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "improvement_pct": 99.98872006781787,
+          "mann_whitney_u": 583320000.0,
+          "p_value": 0.0,
+          "cliffs_delta": 1.0,
+          "effect": "large",
+          "n_baseline": 19444,
+          "n_proposed": 30000
+        },
+        "latency_p99_ms": {
+          "stat": "p99",
+          "percentile_method": "linear",
+          "skew_percentile": null,
+          "baseline": {
+            "point": 543.7296836300001,
+            "low": 538.78745167,
+            "high": 548.330928,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "proposed": {
+            "point": 0.16821705,
+            "low": 0.16739773975,
+            "high": 0.1691741814999999,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "improvement_pct": 99.96906237509843,
+          "mann_whitney_u": 583320000.0,
+          "p_value": 0.0,
+          "cliffs_delta": 1.0,
+          "effect": "large",
+          "n_baseline": 19444,
+          "n_proposed": 30000
+        },
+        "jitter_p99_us": {
+          "stat": "p99",
+          "percentile_method": "linear",
+          "skew_percentile": null,
+          "baseline": {
+            "point": 3123.0895999999984,
+            "low": 3112.734,
+            "high": 3654.6700399999877,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "proposed": {
+            "point": 133.89800000000002,
+            "low": 132.96616500000002,
+            "high": 135.155049,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "improvement_pct": 95.71264301863128,
+          "mann_whitney_u": 582384961.0,
+          "p_value": 0.0,
+          "cliffs_delta": 0.9973019402998201,
+          "effect": "large",
+          "n_baseline": 19441,
+          "n_proposed": 29997
+        }
+      }
+    },
+    {
+      "condition": "pfifo_fast_noclsf",
+      "factor": "all",
+      "baseline": "fifo",
+      "metrics": {
+        "latency_p50_ms": {
+          "stat": "p50",
+          "percentile_method": "linear",
+          "skew_percentile": null,
+          "baseline": {
+            "point": 431.3323805,
+            "low": 431.249238,
+            "high": 431.49404039999996,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "proposed": {
+            "point": 433.153697,
+            "low": 433.121123,
+            "high": 433.185094525,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "improvement_pct": -0.42225359892729475,
+          "mann_whitney_u": 139117951.5,
+          "p_value": 9.681683401385107e-296,
+          "cliffs_delta": -0.21852427021747983,
+          "effect": "small",
+          "n_baseline": 19444,
+          "n_proposed": 18311
+        },
+        "latency_p99_ms": {
+          "stat": "p99",
+          "percentile_method": "linear",
+          "skew_percentile": null,
+          "baseline": {
+            "point": 543.7296836300001,
+            "low": 538.78745167,
+            "high": 548.330928,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "proposed": {
+            "point": 538.8942712000006,
+            "low": 534.527212,
+            "high": 543.4496741425002,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "improvement_pct": 0.8893044789678758,
+          "mann_whitney_u": 139117951.5,
+          "p_value": 9.681683401385107e-296,
+          "cliffs_delta": -0.21852427021747983,
+          "effect": "small",
+          "n_baseline": 19444,
+          "n_proposed": 18311
+        },
+        "jitter_p99_us": {
+          "stat": "p99",
+          "percentile_method": "linear",
+          "skew_percentile": null,
+          "baseline": {
+            "point": 3123.0895999999984,
+            "low": 3112.734,
+            "high": 3654.6700399999877,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "proposed": {
+            "point": 1958.5431,
+            "low": 1956.074,
+            "high": 1962.40614,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "improvement_pct": 37.28828337169702,
+          "mann_whitney_u": 168455130.5,
+          "p_value": 2.5807442587462835e-19,
+          "cliffs_delta": -0.053425645188075535,
+          "effect": "negligible",
+          "n_baseline": 19441,
+          "n_proposed": 18308
+        }
+      }
+    },
+    {
+      "condition": "prio_clsf",
+      "factor": "all",
+      "baseline": "fifo",
+      "metrics": {
+        "latency_p50_ms": {
+          "stat": "p50",
+          "percentile_method": "linear",
+          "skew_percentile": null,
+          "baseline": {
+            "point": 431.3323805,
+            "low": 431.249238,
+            "high": 431.49404039999996,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "proposed": {
+            "point": 0.048974,
+            "low": 0.048814949999999996,
+            "high": 0.049119,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "improvement_pct": 99.9886458790914,
+          "mann_whitney_u": 583320000.0,
+          "p_value": 0.0,
+          "cliffs_delta": 1.0,
+          "effect": "large",
+          "n_baseline": 19444,
+          "n_proposed": 30000
+        },
+        "latency_p99_ms": {
+          "stat": "p99",
+          "percentile_method": "linear",
+          "skew_percentile": null,
+          "baseline": {
+            "point": 543.7296836300001,
+            "low": 538.78745167,
+            "high": 548.330928,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "proposed": {
+            "point": 0.17911023999999995,
+            "low": 0.17791839999999992,
+            "high": 0.180286002,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "improvement_pct": 99.9670589549564,
+          "mann_whitney_u": 583320000.0,
+          "p_value": 0.0,
+          "cliffs_delta": 1.0,
+          "effect": "large",
+          "n_baseline": 19444,
+          "n_proposed": 30000
+        },
+        "jitter_p99_us": {
+          "stat": "p99",
+          "percentile_method": "linear",
+          "skew_percentile": null,
+          "baseline": {
+            "point": 3123.0895999999984,
+            "low": 3112.734,
+            "high": 3654.6700399999877,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "proposed": {
+            "point": 144.69152000000005,
+            "low": 143.068,
+            "high": 146.602,
+            "ci": 0.95,
+            "n_boot": 2000.0
+          },
+          "improvement_pct": 95.3670391012797,
+          "mann_whitney_u": 581687093.0,
+          "p_value": 0.0,
+          "cliffs_delta": 0.9949085867556631,
+          "effect": "large",
+          "n_baseline": 19441,
+          "n_proposed": 29997
+        }
+      }
+    }
+  ]
+}

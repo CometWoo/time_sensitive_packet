@@ -1,748 +1,143 @@
-# Time-Sensitive Cloud-Native Network — eBPF 기반 실험 재현
+# Time-Sensitive Cloud-Native Network on eBPF — 재현, 반증, 재설계
 
-논문 **Wen et al., "A Time-Sensitive Cloud-Native Network Based on eBPF" (CSCWD 2024)** 의 재현 실험.
-Cilium 기반 Kubernetes 클러스터에서 eBPF + TC `prio` qdisc 조합으로 time-sensitive 패킷의 우선순위 처리를 검증합니다.
+[![ci](https://github.com/CometWoo/time_sensitive_packet/actions/workflows/ci.yml/badge.svg)](https://github.com/CometWoo/time_sensitive_packet/actions/workflows/ci.yml)
+[![testbed](https://github.com/CometWoo/time_sensitive_packet/actions/workflows/testbed.yml/badge.svg)](https://github.com/CometWoo/time_sensitive_packet/actions/workflows/testbed.yml)
+[English summary](README.en.md) · [설계 결정 기록(ADR)](docs/adr/README.md) · [결과](docs/RESULTS.md) · [한계](docs/LIMITATIONS.md) · [AIDC 연결](docs/AIDC_RELEVANCE.md)
 
----
+> *Reproducing Wen et al., "A Time-Sensitive Cloud-Native Network Based on eBPF" (CSCWD 2024) on Cilium/Kubernetes —
+> and discovering, from kernel source and measurement, why the first reproduction could not have worked:
+> `skb->priority` is zeroed on every veth crossing, and Cilium's tcx programs hide legacy `clsact` filters.
+> The redesign classifies at the host NIC egress via a tcx link placed before Cilium, marks DSCP for the fabric,
+> and is verified by 26 BPF_PROG_TEST_RUN unit tests, a tcx-ordering integration test, and a contention testbed
+> that runs in CI (p50 433 ms / 35 % loss → 0.05 ms / 0 loss).*
 
-## 실험 결과 요약 (이 repo에서 측정됨)
+## 상태 (정직하게)
 
-### Latency 전체 (낮을수록 좋음, ms 단위)
-| CPU 부하 | Baseline p50 / p99 / max | Proposed p50 / p99 / max | p99 개선 | max 개선 |
-|---------|--------------------------|--------------------------|---------|---------|
-| 10% | 1.19 / **13.02** / 3866.6 | 0.80 / **3.42** / 1737.0 | **−73.7%** ✓ | **−55.1%** ✓ |
-| 30% | 1.30 / **8.21** / 738.1 | 1.04 / **5.94** / 190.6 | **−27.6%** ✓ | **−74.2%** ✓ |
-| 50% | 1.43 / **12.08** / 151.4 | 0.81 / **7.04** / 181.0 | **−41.7%** ✓ | +19.5% ✗ |
-| 70% | 1.13 / **11.78** / 248.8 | 1.05 / **11.64** / 1728.1 | −1.1% ≈ | +594.6% ✗ |
-| 99% | (미측정) | 0.99 / 11.58 / 1519.0 | n/a | n/a |
+| | |
+|---|---|
+| **유효한 결과** | 2026-09 netns 테스트베드, GitHub Actions 러너 kernel 6.17, 병목 20 Mbit/s + best-effort 홍수. [`results/testbed/ci-34294518788`](results/testbed/ci-34294518788/) |
+| **재해석한 결과** | 2026-05 VirtualBox 2-VM K8s 측정 9개 CSV. **우선순위 메커니즘이 작동하지 않은 상태**에서 측정됐음을 확인 → [docs/RESULTS.md §2](docs/RESULTS.md) |
+| **미검증** | 새 설계의 **실제 Cilium 클러스터 실행**. 스크립트는 재작성했지만 현재 VM 에 접근할 수 없다 → [docs/VERIFICATION.md](docs/VERIFICATION.md) |
 
-### Jitter p99 (낮을수록 일정함, μs 단위)
-| CPU 부하 | Baseline | Proposed | 개선 |
-|---------|----------|----------|------|
-| 10% | 12928 | **3266** | **−74.7%** ✓ |
-| 30% | 8307 | **5836** | **−29.7%** ✓ |
-| 50% | 11758 | **6717** | **−42.9%** ✓ |
-| 70% | 11956 | **9393** | **−21.4%** ✓ |
+## 한눈에
 
-(✓ = 의도한 개선,  ≈ = 차이 없음,  ✗ = 악화)
+- **만든 것** — 호스트 NIC egress 에 붙는 eBPF 분류기 `ts_classifier`(AVTP / 802.1Q·ad PCP / UDP 포트 → `skb->priority` 6, DSCP 46 + IPv4 체크섬 증분 갱신, per-CPU 카운터), libbpf tcx 로더(`BPF_F_BEFORE`), 단일 호스트 netns 테스트베드, 통계 패키지(`tsn-analysis`), Cilium/K8s 오케스트레이션, CI.
+- **발견한 것** — ① veth 를 건너는 모든 패킷은 `____dev_forward_skb()` 에서 `skb->priority = 0` 이 된다(v5.15/v6.8 소스 + 실측 52,858/52,858). ② kernel ≥ 6.6 에서 Cilium tcx 프로그램이 `TC_ACT_OK` 를 반환하면 뒤의 legacy `clsact` 필터는 실행되지 않는다(CI 실측 0/21 → BEFORE 첨부 시 20/22). ③ 5월 실험은 경쟁 트래픽이 없었고 talker 가 패킷마다 DNS 를 질의했다.
+- **배운 것** — 우선순위는 "어디서 찍느냐" 가 전부이고, 호스트 밖으로 나가는 신호는 DSCP/PCP 뿐이다. 경합이 없으면 QoS 는 관측되지 않는다. 지표보다 먼저 카운터·프로브·송신 품질을 봐야 한다.
 
-자세한 그래프: `step8-measurement/figures/fig{2..6}_*.png`
+## 핵심 결과 — 경합 하 TS 흐름 (러너 kernel 6.17, 조건당 3 run × 10,000 패킷)
 
----
+| 조건 | 분류기 | latency p50 / p99 (ms) | 손실 | 수신 DSCP | 뜻 |
+|---|---|---|---|---|---|
+| `fifo` (pfifo) | 없음 | 431.3 / 543.7 | 35.2 % | 0 | 우선순위·AQM 없는 NIC 큐 |
+| `fq_codel` (리눅스 기본) | 없음 | 0.42 / 0.73 | 0 | 0 | 흐름 공정 큐가 저속 흐름을 우대 |
+| `pfifo_fast_noclsf` | 없음 | 433.2 / 538.9 | 38.9 % | 0 | **5월 설계의 실제 상태** — priority 0 이면 3-band 큐도 FIFO |
+| `pfifo_fast_clsf` | **있음** | **0.05 / 0.17** | **0** | **46** | 커널 내장 qdisc + 분류기 |
+| `prio_clsf` | **있음** | **0.05 / 0.18** | **0** | **46** | K8s "proposed" 가 의도한 상태 |
 
-## 결과 해석 — 왜 단조롭지 않은가?
+fifo 대비 p99 +99.97 % (Mann-Whitney p < 1e-300, Cliff's δ = +1.00). `pfifo_fast_noclsf` 와 `fifo` 는 통계적으로 같다(δ = −0.22).
+priority 가 죽고 살아나는 지점의 실측(prio_probe): veth 직후 **{0: 52,858}** → 분류기 뒤 **{0: 42,858, 6: 10,000}**.
 
-표만 보면 결과가 들쭉날쭉해 보일 수 있습니다. **이는 실험 환경의 한계 때문이며, 의미 있는 신호와 노이즈를 구분하는 게 중요**합니다.
+| ![latency percentiles](results/testbed/ci-34294518788/report/fig_latency_percentiles.png) | ![latency CDF](results/testbed/ci-34294518788/report/fig_latency_cdf.png) |
+|---|---|
 
-### ✅ 명확하게 신뢰할 수 있는 결과
+자세한 표·통계·재해석: [docs/RESULTS.md](docs/RESULTS.md). 데이터 출처: [docs/DATA_PROVENANCE.md](docs/DATA_PROVENANCE.md).
 
-**1. p99 latency 개선 — CPU 10~50%에서 일관됨**
-- 10%: 13.02 → 3.42ms (−74%)
-- 30%: 8.21 → 5.94ms (−28%)
-- 50%: 12.08 → 7.04ms (−42%)
-- **p99는 10000개 패킷의 상위 100개 평균이라 단일 outlier에 강건**합니다.
-- 이 구간의 일관된 개선은 **`prio` qdisc의 효과가 실제로 동작**하고 있음을 입증합니다.
+## 아키텍처
 
-**2. Jitter p99 개선 — 모든 측정 구간에서 일관됨**
-- 10/30/50/70% 모두에서 baseline 대비 22~75% 감소
-- jitter는 도착 간격의 변동성이라 **시계 오차에 영향받지 않는 receiver-only 지표** → 가장 신뢰도 높음
-- **TSN의 핵심 가치는 "도착 시각의 예측 가능성"이며, 이 지표가 일관되게 개선되었다는 것이 가장 중요한 결과**
-
-**3. Throughput 동일 (~125 KB/s)**
-- 두 모드 모두 송신 간격이 1ms로 동일하므로 당연한 결과
-- **우선순위 큐가 throughput을 깎지 않음**을 보여줌 (부작용 없음 검증)
-
-### ⚠️ 신뢰성 낮은 결과 (해석 주의)
-
-**1. CPU 50% / 70%의 max latency 악화**
-- 50%: baseline max 151ms → proposed max 181ms (+19% 악화)
-- 70%: baseline max 248ms → proposed max 1728ms (+594% 악화)
-
-**왜?** `max`는 **10000개 중 단 1개 패킷**의 값입니다.
-- 이 1개는 보통 외부 원인(VirtualBox 호스트 스케줄링, 네트워크 버스트, GC, ...)으로 인한 거대 outlier
-- 단일 실험에선 이런 outlier가 **무작위로 baseline 또는 proposed 어느 쪽에 떨어질지 운**
-- proposed 70%의 1728ms는 다른 모든 9999개 패킷이 정상 latency였더라도 평균 통계엔 거의 영향 없음 (p99=11.64ms로 baseline과 거의 같음)
-
-→ **max를 보고 "proposed가 나쁘다" 결론짓는 건 부적절**. p99/jitter처럼 통계적으로 안정한 지표를 봐야 합니다.
-
-**2. CPU 70%에서 p99 latency 개선 사라짐**
-- 11.78 → 11.64ms로 거의 동일
-- **이유**: 본 실험 시스템의 진짜 병목이 네트워크가 아니라 CPU 자체가 됨
-  - VM은 2~4 vCPU만 있고 isolcpus 격리 없음
-  - 70% 부하 = stress-ng가 가용 CPU의 대부분 사용
-  - Talker / Listener Python 프로세스, Cilium datapath, kernel softirq 모두 같은 CPU에서 경쟁
-  - `prio` qdisc는 NIC dequeue 순서를 정할 뿐, **CPU 스케줄링 우선순위는 영향 못 줌**
-- 즉 **고부하에선 우선순위 큐의 효과가 CPU 스케줄링 노이즈에 묻힘**
-
-**3. CPU 부하 간 비단조성 (10% → 30% → 50% 개선율의 들쭉날쭉)**
-- p99: −74% → −28% → −42% (단조 감소가 아님)
-- **이유 1 — 단일 실험**: 각 CPU 부하당 1번씩만 측정 (논문은 보통 5~10회 평균)
-- **이유 2 — 측정 잡음**: VM의 PTP 정확도 ~ms 수준, 호스트 시스템 부하 변동 등
-- 통계적 신뢰도를 높이려면 각 조건을 5회 이상 반복 후 평균/CI 산출 필요
-
-### ❌ 측정하지 못한 데이터
-
-**baseline_cpu99 (CPU 99% 부하의 baseline)**
-- 첫 시도 시 stress-ng의 99% CPU 부하가 **worker01 VM을 응답 불능 상태로 만들고 kubelet timeout 발생** → 노드 NotReady
-- VirtualBox VM 재시작이 필요한 상황이라 추가 실행 보류
-- 이로 인해 fig2/4/6의 99% 패널은 Proposed 단독 표시 (그래도 극단 부하에서도 latency가 ~1ms 근처에 모이는 분포는 확인 가능)
-
-### 📊 결론
-
-| 주장 | 본 실험 데이터의 뒷받침 정도 |
-|------|------|
-| Proposed가 CPU 부하 10~50%에서 p99 latency를 줄임 | **강함** (3개 데이터 포인트 모두 일관) |
-| Proposed가 모든 CPU 부하에서 jitter를 줄임 | **강함** (4개 데이터 포인트 모두 일관) |
-| 고부하(70%+)에선 효과가 미미 | **약함** (1개 포인트만 있음 — 추가 측정 필요) |
-| Proposed가 throughput을 손상시키지 않음 | **강함** |
-| Proposed가 max latency를 안정적으로 낮춤 | **불확실** (outlier 노이즈, 단일 실험) |
-
-**한 줄 요약**: jitter와 중부하 이하 p99에서 일관된 개선을 관찰했으며, 이는 논문의 핵심 주장 "eBPF + 우선순위 큐로 TSN 패킷의 도착 일관성을 개선할 수 있다"를 VM 환경에서도 재현했음을 의미합니다. 다만 max latency나 고부하 영역의 정량적 판단을 위해선 다회 반복 측정이 필요합니다.
-
----
-
-## 수치 분석 — 왜 이런 절대값이 나오는가
-
-### Throughput 125.0 KB/s — 왜 정확히 이 수치?
-
-순수 계산값입니다:
-```
-패킷 크기 × 송신 빈도 = 128 byte × (1000 pkt/s) = 128,000 byte/s ≈ 125.0 KB/s
-                                    └ interval=1ms → 1초에 1000개
-```
-**talker.py가 의도적으로 sleep 기반 페이싱**을 하기 때문에 NIC 한계와 무관하게 이 값이 나옵니다. 만약 100 KB/s가 나온다면 시스템이 1ms 페이싱을 못 따라가고 있다는 신호입니다.
-
-### Median latency 0.8~1.4ms — 어디서 오는가?
-
-| 구성 요소 | 기여 latency (대략) | 비고 |
-|----------|-------------------|------|
-| Python `time.sleep()` 정확도 | ~50~200μs | userspace timer 한계 |
-| socket → kernel UDP send 처리 | ~10~50μs | syscall + sk_buff alloc |
-| Cilium tcx (cil_from_container) | ~20~100μs | BPF redirect 처리 |
-| virtio NIC tx → 호스트 → virtio NIC rx | ~100~500μs | VM virtualization 오버헤드 |
-| Cilium tcx (cil_to_endpoint) | ~20~100μs | 수신측 BPF |
-| Listener Python recv 처리 | ~50~200μs | kernel → userspace 복사 + `time.time_ns()` |
-| **합계 (median 추정)** | **~250μs ~ 1.5ms** | 측정값 0.8~1.4ms와 일치 |
-
-물리 서버라면 0.05~0.2ms 수준 — VM은 **virtualization overhead로 약 10x 느림**.
-
-### p99 latency 10~13ms — Median 대비 10배 차이의 정체
-
-이 spike 들의 원인 후보:
-1. **Linux kernel softirq 지연**: 다른 IRQ 처리 중이면 패킷 처리 지연. CPU 부하 시 자주 발생.
-2. **VirtualBox 호스트 스케줄링**: 호스트 OS가 VM의 vCPU를 다른 프로세스에 양보할 때 발생하는 hypervisor preemption. ms 단위 stall.
-3. **kernel TCP/UDP socket buffer 정체**: 송수신 큐가 일시적으로 쌓이는 burst.
-4. **GC 또는 메모리 압박**: Python GC, kernel slab 할당 지연.
-
-`prio` qdisc는 (1)과 (3)에 영향을 주지만 (2)는 못 잡습니다. 그래서 proposed가 baseline보다 낮긴 한데 0이 되진 않습니다.
-
-### max latency 수백~수천 ms — 왜 이렇게 큰가?
-
-100ms 이상의 단일 outlier는 거의 항상 다음 중 하나:
-- **VirtualBox 또는 호스트 OS의 일시적 freeze** (호스트 디스크 IO, 다른 VM 시작 등)
-- **Cilium agent 또는 kubelet의 health check 사이클**과 충돌 (10초마다 큰 부하)
-- **워커 노드의 kernel softlockup** 직전 상황 (CPU 99%에서 자주 발생)
-
-`max`는 10000개 패킷 중 1개의 값이므로 **이런 거대 outlier에 완전히 휘둘립니다**. 통계적으로 안정한 비교는 p99까지로 봐야 합니다.
-
-### jitter p50 600~900μs — 도착 간격이 1ms ±0.6ms 정도
-
-`jitter[i] = recv_time[i] - (recv_time[i-1] + 1ms_expected)`
-
-평균 ~700μs는 다음을 의미:
-- 0.3ms ~ 1.7ms 사이로 도착 간격이 들쭉날쭉
-- **이 변동의 주된 원인은 송신측 timer 정확도** (Python `time.sleep()` + 부하)
-- proposed가 baseline보다 낮은 건 prio qdisc가 송신 측에서 burst를 줄여주기 때문
-
-물리 서버 + 정밀 timer였다면 < 50μs 가능.
-
-### Cilium native routing 환경에서 eBPF 카운터가 0인 이유
-
-```
-sudo bpftool map dump name pkt_stats  →  모든 카운터 0
+```mermaid
+flowchart LR
+    A["talker Pod<br/>UDP:6000 @1 ms"] -- "veth: ____dev_forward_skb()<br/><b>skb->priority = 0</b>" --> B["lxc / Cilium tcx<br/>cil_from_container → redirect"]
+    B --> C{{"NIC egress hook"}}
+    C -- "tcx[0] ts_classifier (BEFORE)<br/>TS → priority 6 + DSCP 46<br/>return TCX_NEXT" --> D["tcx[1] Cilium cil_to_netdev"]
+    D --> E["HTB/tbf 병목 → prio band 0/1/2"] --> F["wire → listener<br/>IP_RECVTOS = 0xB8"]
+    G["be_flood 30 Mbit/s"] -.-> C
 ```
 
-**우리 eBPF는 attach되어 있지만 호출되지 않습니다.** 정확한 원인은 **tcx 와 legacy clsact 의 커널 실행 순서**입니다 (kernel ≥ 6.6):
+세부(커널 함수·줄 번호, v1 대비 표): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). 논문 요소 대응: [docs/PAPER_MAPPING.md](docs/PAPER_MAPPING.md).
 
-1. Pod 송신 패킷이 lxc<hash> veth ingress 로 진입.
-2. 커널 `sch_handle_ingress()` 는 **tcx 프로그램을 먼저 실행**하고(`tcx_run`), 그것이 `TC_ACT_UNSPEC` 를 반환할 때만 **legacy clsact(`tc_run`) 를 실행**한다 (net/core/dev.c).
-3. Cilium 의 **tcx/ingress `cil_from_container`** 가 먼저 실행되어 정책 검사 후 `bpf_redirect()` 로 enp0s3 에 보내고 `TC_ACT_REDIRECT`(=UNSPEC 아님) 를 반환한다.
-4. 따라서 그 뒤의 **legacy clsact `veth_filter`(우리 BPF)는 호출되지 않는다** → `pkt_stats` 카운터 0.
-5. 물리 NIC ingress(`enp0s3`) 의 `ingress.bpf.o` 도 같은 이유 — Cilium `cil_from_netdev`(tcx) 가 먼저 처리.
+## 설계 결정 — 무엇을 고민했고 왜 이걸 골랐나
 
-> **즉 "Cilium 우회" 라기보다 "tcx 가 clsact 보다 먼저 실행되고 비-UNSPEC 을 반환해 clsact 가 스킵된다" 가 정확한 메커니즘.** 다른 사람 환경에서 카운터가 찍혔다면 그 환경은 (a) kernel < 6.6 이라 Cilium 도 legacy clsact 를 쓰거나, (b) Cilium tcx 가 해당 device 에 없거나, (c) 우리 프로그램이 tcx 로 `BPF_F_BEFORE` 우선순위로 붙은 경우다.
+| 결정 | 대안들 | 선택한 이유 | ADR |
+|---|---|---|---|
+| 분류 지점 = **호스트 NIC egress** | Pod eth0 egress(6월 설계), 호스트측 veth ingress(5월, 논문 vef), cgroup/sockops, tc u32+skbedit | veth 뒤·qdisc 직전만이 priority 가 살아남는 유일한 지점 | [0003](docs/adr/0003-classify-at-host-nic-egress.md) |
+| **tcx BEFORE + TC_ACT_UNSPEC** | legacy clsact, tcx AFTER, Cilium 프로그램 교체 | Cilium 이 OK 를 반환하면 뒤는 실행 안 됨; UNSPEC 이라야 Cilium 이 이어서 실행 | [0005](docs/adr/0005-tcx-before-cilium.md) |
+| 병목 + 경쟁 트래픽 필수 | CPU 부하만(5월), NIC 포화, netem, tap 에뮬레이터, WSL 커널 재빌드 | 큐가 비면 우선순위는 무의미; tbf/HTB 아래 조건 qdisc 가 재현성 최고 | [0006](docs/adr/0006-testbed-needs-contention.md) |
+| DSCP EF 마킹 | 앱 `IP_TOS`, iptables mangle, PCP 만 | skb->priority 는 NIC 밖에서 죽는다; 패브릭이 읽는 건 DSCP | [0007](docs/adr/0007-dscp-marking-for-fabric-qos.md) |
+| 비교 조건 5개 | baseline/proposed 2개 | `noclsf` = `fifo` 로 인과 분리, fq_codel 의 sparse-flow 우대 정량화 | [0010](docs/adr/0010-qdisc-conditions.md) |
+| `prio`/`pfifo_fast` (mqprio/ETF/taprio 아님) | 논문 스택 그대로 | 1 TX 큐 virtio, SO_TXTIME 없는 talker, TAI 불일치 — 실패 기록 | [0002](docs/adr/0002-prio-instead-of-mqprio-etf-taprio.md) |
+| priority 6 + 기본 priomap | 3 + 커스텀 priomap(논문 Table I) | 권한 경계 ≤ 6, 커스텀 맵에서 0 → band 2 로 갔던 사고 | [0011](docs/adr/0011-priority-6-default-priomap.md) |
+| 5월 데이터 보존·재분류 | 삭제 | 틀린 숫자를 찾아낸 과정이 핵심 | [0016](docs/adr/0016-results-provenance.md) |
 
-결과: **eBPF 통계는 0이지만 실험은 정상**. 이유는 talker가 `SO_PRIORITY=3`을 socket에 직접 설정하기 때문에 `skb->priority`가 자동 전파되고, prio qdisc가 그걸 보고 band 0으로 분류합니다. 우리 clsact eBPF의 역할은 보강(SO_PRIORITY 없는 외부 패킷도 분류)이지 실험에 필수는 아닙니다.
+전체 16개: [docs/adr/README.md](docs/adr/README.md). 모든 ADR 은 문제 → 대안(장단점) → 결정 → 결과/한계 순서다.
 
-> ⚠️ 카운터를 찍으려고 우리 프로그램을 tcx `BPF_F_BEFORE` 로 Cilium 앞에 끼워넣을 수도 있지만, Cilium datapath 와 간섭 위험이 있고 실험 결과(SO_PRIORITY + prio qdisc 기반)에는 영향이 없으므로 **본 repo는 attach 순서를 바꾸지 않습니다.**
+## 검증
 
-성능 차이는 **prio qdisc → band 0 dequeue 우선** 매커니즘에서 옵니다.
+| 무엇 | 방법 | 어디서 |
+|---|---|---|
+| 분류 규칙·DSCP·체크섬·설정 map·단편/절단/IPv6 | **26개 BPF_PROG_TEST_RUN 단위 테스트** (`bpftool prog run`, 크래프트 패킷) | `bpf/tests/`, CI `bpf` (kernel 6.17) + WSL2 5.15 |
+| tcx 순서(OK 가 체인을 끊음 / BEFORE 로 둘 다 실행) | 통합 테스트 `test_tcx_chain.sh` | CI `bpf` — ALL PASS |
+| veth priority 리셋, 분류기 카운터, DSCP 도착, 경합 하 latency/손실 | netns 테스트베드 3 run × 5 조건 | CI `testbed` 아티팩트 → `results/` |
+| 통계 함수 | 65 pytest (Cliff's δ O(n log n) vs O(n²) 대조 등) | CI `analysis` |
+| 셸/파이썬/매니페스트 | shellcheck / ruff / kubeconform | CI `lint` |
+| **Cilium 클러스터 실행** | — | **미검증** ([docs/VERIFICATION.md](docs/VERIFICATION.md)) |
 
----
+## 한계 (요약)
 
-## 실험 조절 — 파라미터 변경법
+VirtualBox 1 TX 큐·소프트웨어 시계, CI 러너 공유 vCPU·veth 경로(물리 NIC 큐 없음), 파이썬 페이싱(수십 μs),
+IPv6 미지원, UDP 포트 기준의 신뢰 경계 부재, 클러스터 재측정 미완. 전체 목록: [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
-### A) 패킷 크기, 개수, 간격 변경
+## AI 데이터센터 네트워크와의 연결
 
-`step7-experiment/k8s/talker-job.yaml` 의 `args` 수정:
+`skb->priority`(호스트 내부) vs **DSCP**(패브릭이 읽는 신호), strict-priority 밴드 ↔ 스위치 egress 큐/DCB,
+꼬리 지연 ↔ 집단 통신 straggler, PFC/ECN 과의 관계, CNI 와 공존하는 BPF 훅 — 대응표와 실 하드웨어 로드맵:
+[docs/AIDC_RELEVANCE.md](docs/AIDC_RELEVANCE.md).
 
-```yaml
-args:
-  - "--target=listener-svc.tsn-experiment.svc.cluster.local"
-  - "--port=5000"
-  - "--interval=1"      # ms — 송신 간격. 0.5면 2000pkt/s
-  - "--count=10000"     # 총 패킷 수. 10000이면 ~10초 실험
-  - "--size=128"        # bytes per packet (header 12 + payload 116)
-  - "--log=/data/talker-log.csv"
-  - "--vlan-priority=3" # SO_PRIORITY. 3=TSN, 0=best-effort
-```
-
-변경 효과:
-- `--interval` 줄이면 packet rate ↑ → bandwidth ↑, jitter 측정 정밀도 ↑, 부하 ↑
-- `--count` 늘리면 통계 신뢰성 ↑, 실험 시간 길어짐 (count × interval / 1000 = 초)
-- `--size` 늘리면 throughput 검증 가능 (1500까지 — VM MTU 한계)
-- `--vlan-priority` 를 0으로 바꾸면 **proposed 모드라도 baseline과 같아짐** (실험 통제 변수 검증용)
-
-### B) CPU 부하 강도 변경
-
-`deploy-experiment.sh run baseline <N>` 의 `<N>` 자리에 0~99 숫자.
-
-내부적으로 `step7-experiment/k8s/stress-daemonset.yaml` 의 `--cpu-load` 값을 sed로 치환합니다:
-```yaml
-args:
-  - "--cpu"
-  - "2"           # 워커 수 (vCPU 개수)
-  - "--cpu-load"
-  - "99"          # ← deploy-experiment.sh가 여기를 N으로 치환
-  - "--timeout"
-  - "600s"
-  - "--cpu-method"
-  - "matrixprod"  # 다른 옵션: int128, fft, ...
-```
-
-**주의**: `--cpu-load 99`는 worker01을 응답 불능으로 만들 수 있음. **권장 안전 상한: 80%**. 90% 이상은 worker01 다운 위험.
-
-### C) Listener 타임아웃 변경
-
-`step7-experiment/k8s/listener-deployment.yaml`:
-```yaml
-args:
-  - "--port=5000"
-  - "--interval=1"      # talker와 일치해야 jitter 계산 정확
-  - "--timeout=60"      # 마지막 패킷 후 N초 대기 → CSV write → 종료
-  - "--output=/data/results.csv"
-```
-
-`--timeout` 을 줄이면 실험 종료 빨라지지만, 너무 짧으면 후행 패킷 손실 가능. 60초가 안전.
-
-### D) Qdisc 종류 변경 (mqprio/prio/ETF)
-
-`deploy-experiment.sh` 내 `setup_tc_qdisc()` 함수:
-- 기본: TX queue ≥ 3이면 mqprio, 아니면 prio 폴백
-- ETF (txtime 스케줄링): mqprio/prio band 0 위에 ETF 추가 시도 → CLOCK_TAI 우선, 실패 시 CLOCK_REALTIME
-
-수동으로 다른 qdisc를 시험하려면 함수를 수정. 예: `taprio` (시간 인지 스케줄링):
-```bash
-sudo tc qdisc replace dev enp0s3 root taprio \
-    num_tc 3 map 2 2 1 0 ... \
-    sched-entry S 01 250000 \
-    sched-entry S 02 250000 \
-    clockid CLOCK_TAI
-```
-
-### E) 다회 반복 측정으로 통계 신뢰도 높이기
-
-현재 스크립트는 1회 실행이지만, 반복은 쉽게 가능:
-```bash
-mkdir -p step8-measurement/results/runs
-for run in 1 2 3 4 5; do
-    for cpu in 10 30 50 70; do
-        bash deploy-experiment.sh run baseline $cpu
-        mv step8-measurement/results/baseline_cpu${cpu}.csv \
-           step8-measurement/results/runs/baseline_cpu${cpu}_run${run}.csv
-        sudo bash deploy-experiment.sh run proposed $cpu
-        mv step8-measurement/results/proposed_cpu${cpu}.csv \
-           step8-measurement/results/runs/proposed_cpu${cpu}_run${run}.csv
-    done
-done
-# 그 후 별도 분석 스크립트로 평균/CI 계산
-```
-
-5회 평균 시 p99 추정의 표준 오차가 √5 ≈ 2.2배 줄어듭니다.
-
----
-
-## 디버깅 — 실험이 의도대로 안 될 때
-
-### 단계별 검증 체크리스트
-
-#### 1. K8s 클러스터 상태
-```bash
-kubectl get nodes -o wide
-# k8s-master, k8s-worker01 모두 Ready 여야 함
-# NotReady면 VM 재시작 또는 kubelet 재시작:
-#   ssh worker01 "sudo systemctl restart kubelet"
-
-kubectl -n tsn-experiment get pods -o wide
-# listener-xxx (worker01에서 Running), talker-run-xxx (master에서 Completed/Running)
-```
-
-#### 2. Cilium 상태
-```bash
-kubectl -n kube-system get pods -l k8s-app=cilium
-# 모든 cilium pod가 Running 이어야 함
-
-# Cilium 데이터패스 모드 확인 (이 실험은 native routing 가정)
-kubectl -n kube-system get cm cilium-config -o yaml | grep -E 'routing-mode|tunnel'
-
-# Pod 간 연결성 테스트
-LISTENER_IP=$(kubectl -n tsn-experiment get pod -l app=listener -o jsonpath='{.items[0].status.podIP}')
-kubectl -n tsn-experiment exec test-master -- ping -c 3 $LISTENER_IP
-```
-
-#### 3. eBPF Attach 확인
-```bash
-# 우리 BPF 프로그램이 부착되어 있나?
-sudo bpftool net show dev enp0s3
-# 기대: clsact/egress 에 egress.bpf.o 있음
-# 기대: tcx/ingress 에 cil_from_netdev (Cilium 것)
-
-# 모든 veth에 veth_filter가 붙었나?
-for v in $(ip link show type veth | awk -F': ' '/^[0-9]/{print $2}' | cut -d'@' -f1); do
-    echo "[$v]"
-    sudo bpftool net show dev $v 2>/dev/null | grep -E 'clsact|tcx' | head -3
-done
-```
-
-#### 4. TC Qdisc 상태
-```bash
-# 현재 qdisc 무엇인가?
-sudo tc qdisc show dev enp0s3
-# baseline: fq_codel 또는 pfifo_fast
-# proposed: prio 100: bands 3 priomap ...
-
-# 각 band가 실제 패킷을 처리하나? (proposed 실행 중에 확인)
-sudo tc -s qdisc show dev enp0s3
-# prio 출력의 Sent 바이트가 0보다 커야 함
-```
-
-#### 5. eBPF 통계 (Cilium native routing에서는 0이 정상)
-```bash
-sudo bpftool map dump name pkt_stats
-# 각 prog별 [TOTAL, TSN, BEST_EFF, DROPPED] 카운터
-# Cilium native routing이면 모두 0 — 정상
-
-sudo bpftool map dump name debug_stats
-# PROG_ENTER, TSN_PORT, NOT_IP 등 분류별 카운터
-```
-
-#### 6. 실시간 trace 로그
-```bash
-# 별도 터미널에서 띄워두고 실험 실행
-sudo cat /sys/kernel/debug/tracing/trace_pipe
-# bpf_printk() 메시지가 실시간 출력됨
-# "[INFO] vef: UDP port 5000 → TSN (tc0)" 등 — Cilium native routing이면 안 나옴
-```
-
-#### 7. 패킷 송수신 검증
-```bash
-# Talker pod이 실제 송신했나?
-kubectl -n tsn-experiment logs talker-run-xxxxx
-# "전송 완료: 10000/10000 (오류: 0)" 보여야 함
-
-# Listener pod가 수신했나?
-LP=$(kubectl -n tsn-experiment get pod -l app=listener -o jsonpath='{.items[0].metadata.name}')
-kubectl -n tsn-experiment logs $LP
-# "수신: 1000 pkts, BW: 124.X KB/s, ..." 진행 로그 + "총 수신: 10000 패킷" 최종
-
-# /data/results.csv 가 만들어졌나?
-kubectl -n tsn-experiment exec $LP -- ls -la /data/
-```
-
-#### 8. tcpdump로 실제 wire 패킷 확인
-```bash
-# 마스터 노드에서 송신 패킷 캡처 (UDP 5000)
-sudo tcpdump -i enp0s3 -nn -c 20 'udp port 5000'
-
-# 워커 노드에서 수신 패킷 캡처 (worker01에 SSH 있어야 함)
-ssh worker01 "sudo tcpdump -i enp0s3 -nn -c 20 'udp port 5000'"
-```
-
-#### 9. 시계 동기화 확인
-```bash
-# 마스터와 워커의 시간 차이
-ssh worker01 "date +%s.%N" ; date +%s.%N
-# 차이가 100ms 넘으면 latency 측정 오차 큼
-# 해결: chrony 또는 PTP 설정
-```
-
-### 흔한 문제와 해결
-
-| 증상 | 진단 | 해결 |
-|------|------|------|
-| `results.csv: No such file` | listener가 패킷 0개 수신 | worker01 Ready? Cilium pod 정상? `kubectl logs $LP` 확인 |
-| Talker Job timeout | 5분 안에 완료 안 됨 | image pull 중일 수도. `kubectl describe job talker-run` 확인 |
-| `mqprio: Operation not supported` | NIC TX queue 부족 | 자동으로 prio 폴백 — 정상. 무시 |
-| `kubectl localhost:8080 refused` | sudo 환경에서 kubeconfig 없음 | `sudo cp /home/worker/.kube/config /root/.kube/config` |
-| pkt_stats 전부 0 | Cilium native routing이 우회 | **정상**. talker SO_PRIORITY로 동작 확인됨 |
-| latency 음수 | VM 시계 어긋남 | plot-results.py가 자동 정규화. 무시 가능 |
-| worker01 NotReady | CPU 99% 부하로 kubelet timeout | VirtualBox에서 VM 재시작 |
-| proposed가 baseline보다 나쁨 | 통계 noise (1회 실험의 한계) | 다회 반복 측정 권장 |
-
-### 실험 안전하게 중단
+## 빠른 시작
 
 ```bash
-# 진행 중인 실험 즉시 중단
-sudo bash deploy-experiment.sh cleanup
-# = K8s namespace 삭제 + qdisc/BPF 모두 해제
+# 1) eBPF 빌드 + 단위 테스트 (Linux, clang/libbpf-dev/linux-libc-dev/bpftool, root)
+make -C bpf && make -C bpf tools
+sudo make -C bpf test          # 26 BPF_PROG_TEST_RUN
+sudo make -C bpf test-tcx      # kernel >= 6.6
+
+# 2) netns 테스트베드 (sch_tbf/sch_prio 가 있는 커널이면 경합 실험, 없으면 기능 검증 모드)
+sudo bash testbed/run.sh --runs 3 --rate-mbps 20 --flood-mbps 30 --out testbed/runs/local
+
+# 3) 분석
+python -m pip install -e ./analysis
+tsn-analysis summary testbed/runs/local --baseline fifo --markdown - && tsn-analysis plot testbed/runs/local --out figs
+
+# 4) Kubernetes/Cilium 클러스터 (VM 2대) — docs/RUNBOOK.md
+cp experiment.env.example experiment.env && sudo bash scripts/experiment.sh build-ebpf && sudo bash scripts/experiment.sh matrix 3
 ```
 
-### 측정 지표 용어
-- **p50** (50th percentile, median): 전체 패킷을 latency 오름차순 정렬했을 때 **정 가운데** 값. 절반의 패킷이 이보다 빠르게 도착.
-- **p99** (99th percentile): **상위 1% 직전**의 값. "보통은 이 정도가 worst-case" — TSN/실시간 시스템에서 가장 중요한 지표.
-- **max**: 가장 느렸던 단 한 개 패킷의 latency. outlier 영향이 크지만 worst-case를 보여줌.
-- **jitter** (μs): 연속한 두 패킷의 도착 간격이 예상치(1ms)에서 얼마나 벗어났는가. 작을수록 도착이 일정함.
-- **CPU 부하 N%**: 백그라운드 `stress-ng` 데몬셋이 만드는 CPU 점유율. **p50/p99과는 무관한 별개 축**.
+CI 가 같은 일을 매 push 마다 한다(`.github/workflows/`). Windows 에서는 WSL2 로 1)–3) 이 돈다(셰이퍼 없이).
 
-### 그래프 읽는 법
-- **Figure 2 / 4 / 6 (CPU 부하별 비교)**: 3개 패널로 표시 — `low` (둘 다 데이터 있는 최저 부하, 보통 10%), `high` (둘 다 있는 최고, 보통 70%), `extreme` (한쪽이라도 있는 최고, 보통 99% — 극단적 부하에서의 Proposed 추세 표시).
-- **Figure 2 (Throughput)**: 막대 그래프. 1ms 간격 송신이므로 두 모드 모두 ~125 KB/s (의도된 결과 — 우선순위 큐의 목적은 throughput이 아니라 latency 안정성).
-- **Figure 3 (Latency 전체)**: X축 CPU 부하, Y축 latency (ms, log scale). 그룹당 6개 막대: Baseline {p50, p99, max} + Proposed {p50, p99, max}. 색은 mode, 빗금은 percentile.
-- **Figure 4 (Jitter 비교)**: Baseline vs Proposed jitter 막대. 99% 패널은 Proposed만 — baseline은 worker01 다운 위험으로 미측정.
-- **Figure 5 (Jitter 전체)**: Figure 3과 동일 구조의 jitter 버전.
-- **Figure 6 (Latency CDF)**: 누적 분포. 곡선이 **좌상**에 가까울수록 빠르고 일관됨. 99% 패널의 Proposed 단독 곡선은 극단 부하에서도 latency가 ~1ms 근처에 모이는지 보여줌.
-
----
-
-## 빠른 시작 — 3분 안에 검증
-
-이미 환경이 구축된 VM에서:
-
-```bash
-# 결과 한번에 확인
-bash verify-experiment.sh
-
-# 또는 통계만
-python3 compare_results.py
-```
-
-처음부터 다시 돌리려면 [§ 실험 실행](#실험-실행)을 참조.
-
----
-
-## 디렉토리 구조
+## 저장소 구조
 
 ```
-.
-├── README.md                            # 본 문서
-├── deploy-experiment.sh                 # 메인 자동화 스크립트 ★
-├── verify-experiment.sh                 # 결과 검증 헬퍼
-├── compare_results.py                   # baseline vs proposed 통계 비교
-│
-├── step2-os-setup/                      # (참고) OS 사전 준비
-├── step3-kubernetes/                    # (참고) K8s 클러스터 구성
-├── step4-cilium/                        # (참고) Cilium CNI 설치
-├── step5-tc-qdisc/                      # (참고) TC qdisc 옵션 스크립트
-│
-├── step6-ebpf/                          # eBPF 프로그램 (단일 프로그램 설계)
-│   ├── src/
-│   │   └── vnic_filter.c                # Pod eth0 egress 분류기 (TS 판별 + priority 6 + pkt_count)
-│   ├── attach-vnic.sh                   # Pod netns 내부 eth0 egress 에 nsenter attach
-│   ├── Makefile                         # 실제 커널/libbpf 헤더로 빌드
-│   └── build/vnic_filter.bpf.o          # (VM에서 make 로 생성)
-│
-├── step7-experiment/
-│   ├── talker/talker.py                 # UDP 송신 (1ms 간격, 포트 6000, SO_PRIORITY=6, --start-delay)
-│   ├── listener/listener.py             # 수신 + latency/jitter 측정 (포트 6000)
-│   └── k8s/
-│       ├── namespace.yaml
-│       ├── listener-deployment.yaml     # 워커 노드에 배치 (포트 6000)
-│       ├── talker-job.yaml              # 마스터 노드에 배치 (포트 6000, priority 6)
-│       ├── stress-daemonset.yaml        # CPU 부하 생성
-│       └── test-master.yaml             # (참고) 더미 pod
-│
-└── step8-measurement/
-    ├── plot-results.py                  # Figure 2~6 생성 ★
-    ├── results/*.csv                    # 측정 결과
-    └── figures/*.png                    # 그래프 출력
+bpf/            eBPF: src/{ts_classifier,prio_probe,tcx_dummy_ok}.c · tools/tcx_attach.c · tests/ (BPF_PROG_TEST_RUN, tcx chain) · Makefile
+workload/       talker.py · listener.py · be_flood.py · udp_sink.py   (테스트베드와 K8s 가 같은 파일을 사용)
+testbed/        topology.sh · run.sh · bpfmaps.py                     (단일 호스트 netns 테스트베드)
+k8s/            kustomization.yaml · listener/udp-sink · talker-job/be-flood-job/stress-daemonset 템플릿
+scripts/        experiment.sh (K8s 오케스트레이션) · verify.sh · hubble-monitor.sh · setup/ (VM 설치) · qdisc-reference/ (mqprio/ETF/taprio, 참고용) · ci/
+analysis/       tsn_analysis 패키지 (loader/metrics/stats/plots/report/cli) + tests
+results/        testbed/ (CI 실측: CSV · meta.json · report) · k8s-2026-05/ (5월 K8s 데이터 + 그래프, 재해석용)
+docs/           ARCHITECTURE · RESULTS · LIMITATIONS · VERIFICATION · DATA_PROVENANCE · PAPER_MAPPING · AIDC_RELEVANCE · RUNBOOK · adr/
+.github/        ci.yml (lint · bpf · analysis) · testbed.yml (실험 → 아티팩트)
+Makefile · experiment.env.example · CHANGELOG.md · LICENSE
 ```
 
----
-
-## 환경 요구사항
-
-### 호스트
-- Windows / Linux / macOS 어디든 (VirtualBox 가 돌아가는 곳)
-- VirtualBox 7.x
-
-### VM (2 ~ 4대)
-- Ubuntu 24.04 LTS (kernel ≥ 6.6, eBPF tcx 지원)
-- 각 4GB RAM, 4 vCPU 권장
-- 네트워크: **NAT Network** (이름 `k8sNetwork`, CIDR 10.0.2.0/24)
-- 호스트→마스터 SSH: 포트 포워딩 `127.0.0.1:2222 → 10.0.2.8:22`
-
-### 클러스터 구성
-| 노드 | IP | 역할 |
-|------|-----|------|
-| k8s-master | 10.0.2.8 | control-plane, Talker(송신) |
-| k8s-worker01 | 10.0.2.4 | worker, Listener(수신) |
-| k8s-worker02/03 | 10.0.2.5/6 | (선택) 추가 워커 |
-
-### 소프트웨어 (설치되어 있어야 함)
-- Kubernetes v1.30.x (containerd v2.x)
-- Cilium v1.19.x (`routing-mode: native`, datapath veth)
-- clang + LLVM (eBPF 빌드, 빌드 결과는 사전 커밋됨)
-- bpftool (디버깅)
-- python3 + numpy + matplotlib + pandas (시각화)
-
----
-
-## 초기 셋업 (한 번만)
-
-### 1. SSH + sudo 설정 (호스트에서 VM 접속용)
-```bash
-# 호스트(Windows PowerShell)에서 SSH 키 생성
-ssh-keygen -t ed25519 -f $HOME\.ssh\vm_tsn -N '""'
-
-# 공개키를 VM에 등록 (VM 안에서 1회 실행)
-mkdir -p ~/.ssh && chmod 700 ~/.ssh
-echo '<ssh-ed25519 ... 공개키 내용>' >> ~/.ssh/authorized_keys
-chmod 600 ~/.ssh/authorized_keys
-
-# VM에서 passwordless sudo
-echo "worker ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/worker
-sudo chmod 440 /etc/sudoers.d/worker
-
-# VM에서 root용 kubeconfig (sudo 환경에서 kubectl 사용)
-sudo mkdir -p /root/.kube
-sudo cp /home/worker/.kube/config /root/.kube/config
-```
-
-### 2. 시각화 의존성 (마스터 VM에서)
-```bash
-sudo apt install -y python3-pip python3-numpy python3-matplotlib python3-pandas
-```
-
-### 3. (선택) PTP 시계 동기화
-master/worker VM 간 시계가 어긋나면 절대 latency 값이 음수가 됩니다. plot-results.py가 자동 보정하지만 정밀 측정을 위해서는 PTP 설정 권장:
-```bash
-sudo bash step2-os-setup/04-configure-ptp.sh
-```
-
----
-
-## 실험 실행
-
-### 매번 실행 순서
-
-```bash
-cd ~/Desktop/time_sensitive_packet
-
-# (1) K8s 네임스페이스/리소스 배포
-bash deploy-experiment.sh deploy-k8s
-
-# (2) eBPF attach 대상 pod 미리 띄우기
-kubectl apply -f step7-experiment/k8s/test-master.yaml
-kubectl -n tsn-experiment wait --for=condition=ready pod/test-master --timeout=60s
-
-# (3) eBPF 프로그램 attach (sender 모드 = 마스터 노드용)
-sudo bash deploy-experiment.sh setup-ebpf sender
-
-# (4) baseline 실험 (CPU 10% 부하)
-bash deploy-experiment.sh run baseline 10
-
-# (5) proposed 실험 (CPU 10% 부하)
-sudo bash deploy-experiment.sh run proposed 10
-
-# (6) (선택) 다른 CPU 부하도 측정
-for cpu in 30 50 70 90; do
-    bash deploy-experiment.sh run baseline $cpu
-    sudo bash deploy-experiment.sh run proposed $cpu
-done
-
-# (7) 그래프 + 통계
-cd step8-measurement && python3 plot-results.py && cd ..
-python3 compare_results.py
-```
-
-### 명령어 한 줄 요약
-
-| 명령 | 설명 |
-|------|------|
-| `bash deploy-experiment.sh deploy-k8s` | namespace + Listener pod 배포 |
-| `sudo bash deploy-experiment.sh setup-ebpf sender` | eBPF 컴파일/부착 (송신측) |
-| `sudo bash deploy-experiment.sh setup-ebpf receiver` | eBPF 부착 (수신측, worker01에서) |
-| `bash deploy-experiment.sh run baseline <cpu%>` | Baseline 실험 1회 |
-| `sudo bash deploy-experiment.sh run proposed <cpu%>` | Proposed 실험 1회 |
-| `sudo bash deploy-experiment.sh status` | 현재 eBPF / qdisc / pod 상태 |
-| `sudo bash deploy-experiment.sh cleanup` | 모든 BPF/qdisc/pod 정리 |
-| `bash verify-experiment.sh` | 결과 한 번에 확인 |
-
----
-
-## 아키텍처 (단일 프로그램 설계)
-
-```
-[Host-s = master]                                      [Host-r = worker01]
-  ┌─ talker pod ───────────────┐                       ┌─ listener pod ─┐
-  │ talker.py                   │                       │ listener.py    │
-  │  SO_PRIORITY=6              │── UDP:6000 ──────────▶│  (port 6000)   │
-  │ ┌─ eth0 (pod 내부) ──────┐ │                       └────────┬───────┘
-  │ │ clsact/egress:         │ │                                │
-  │ │ vnic_filter.bpf.o ◀────┼─┼── nsenter attach (attach-vnic.sh)
-  │ │  - TS 판별(AVTP/PCP≥5/  │ │   * Cilium tcx 가 손대기 전 지점 → pkt_count 확실히 찍힘
-  │ │    UDP:6000)            │ │
-  │ │  - skb->priority = 6    │ │
-  │ │  - pkt_count[0/1]++     │ │
-  │ └────────┬───────────────┘ │
-  └──────────┼─────────────────┘
-             │ veth → lxc<hash> → Cilium tcx → bpf_redirect
-  ┌──────────▼ enp0s3 (egress) ─────────┐
-  │ qdisc: prio (proposed)               │
-  │   기본 priomap: priority 6 → band 0  │  ← TS 패킷이 먼저 dequeue
-  │ qdisc: fq_codel (baseline)           │  ← 우선순위 밴드 없음 (대조군)
-  └──────────────────────────────────────┘
-```
-
-### 핵심 메커니즘
-1. **talker가 `SO_PRIORITY=6` 설정** → 송신 패킷 `skb->priority=6`. **vnic_filter** 도 Pod eth0 egress 에서 TS 패킷에 priority 6 을 (재)설정하고 `pkt_count` 를 증가시킨다.
-2. **proposed = `prio` qdisc**: 리눅스 기본 priomap 이 priority 6,7 → band 0(최우선) 이므로, 커스텀 priomap 없이 TS 패킷이 band 0 으로 우선 enqueue/dequeue 된다.
-3. **baseline = `fq_codel`**: 우선순위 밴드가 없어 TS/일반 패킷이 동등 → 깨끗한 대조군.
-4. CPU 부하가 높아도 proposed 는 band 0 이 먼저 dequeue → latency/jitter 변동 축소.
-
-> **왜 Pod eth0 egress 에 붙이나**: kernel ≥6.6 + Cilium 에서는 호스트측 veth 의 tcx(`cil_from_container`)가 legacy clsact 보다 먼저 실행되어 카운터가 0이 됐다(이전 설계의 한계). Pod 의 eth0 egress 는 Cilium 이 손대기 전이라 **vnic_filter 가 확실히 실행되고 pkt_count 가 찍힌다.** `attach-vnic.sh` 가 `nsenter` 로 Pod netns 에 들어가 attach 한다.
-
----
-
-## VM 환경 한계 및 논문과의 차이
-
-| 항목 | 논문 (물리 서버) | 본 실험 (VM) | 영향 |
-|------|----------------|-------------|------|
-| CPU | 72 논리코어, 8코어 격리 | 2~4 vCPU, 격리 없음 | absolute latency 큼 |
-| 메모리 | 16GB | 4GB | OOM 위험 |
-| NIC | 4 hw queue | 1 virtio queue | **mqprio 불가 → prio 대체** |
-| Clock | hw timestamp (~ns) | sw PTP/NTP (~ms) | 절대 latency 음수 가능 → 정규화 |
-| ETF | hw LaunchTime | CLOCK_TAI 미지원 가능 | 미사용 |
-| Routing | (가정) tunnel | Cilium `native` (bpf_redirect) | clsact BPF 우회됨 |
-
-**위 한계로 인해 절대 수치는 논문과 다르지만, 상대 개선율(baseline vs proposed) 경향은 재현됨.**
-
----
-
-## 코드 감사 (2026-06)
-
-### ★ 최종 재설계 — 단일 프로그램(vnic_filter)
-
-아래 "3-프로그램(vef/eg/ig)" 감사 내용은 이후 **단일 프로그램 설계로 전면 교체**되었습니다. 현재 구조:
-
-- **eBPF 1개**: `step6-ebpf/src/vnic_filter.c` — Pod eth0 **egress(netns 내부)** 에 attach.
-  TS 패킷 판별(AVTP / VLAN PCP≥5 / UDP:6000) → `skb->priority=6` → `pkt_count`(key0=일반, key1=TS) 증가.
-- **attach**: `step6-ebpf/attach-vnic.sh` 가 `crictl`+`nsenter` 로 talker Pod netns 의 eth0 egress 에 붙인다.
-  → Cilium tcx 우회 문제가 사라져 **pkt_count 가 확실히 찍힌다** (이전 설계의 pkt_stats=0 근본 해결).
-- **qdisc**: proposed=`prio`(기본 priomap, priority 6→band 0), baseline=`fq_codel`(밴드 없음, 대조군).
-- **헤더**: 실제 커널/libbpf 헤더(`stub-headers` 제거). 빌드 의존: `clang make libbpf-dev linux-libc-dev`.
-- **포트/우선순위**: UDP **6000**, **priority 6** (talker SO_PRIORITY=6 + vnic_filter).
-- 제거됨: vef/eg/ig 3개 프로그램, common.h, debug_level/pkt_stats/debug_stats/ringbuf, XDP, host-side/tcx attach 로직.
-- ⚠️ 실행 순서가 바뀜: `build-ebpf` → `deploy-k8s` → `run proposed <cpu>`(talker Pod 에 자동 attach) → `cleanup`.
-  pkt_count 라이브 확인: `sudo bash step6-ebpf/attach-vnic.sh show tsn-experiment <talker-pod>`.
-- ⚠️ Windows 정적 분석 기반 — VM에서 `make -C step6-ebpf` + `bash verify-experiment.sh` 로 검증 필요.
-
-아래는 그 이전(3-프로그램) 감사 기록입니다.
-
----
-
-### (이전 기록) 논문 충실도 및 정합성 점검
-
-7개 항목을 코드 라인 기준으로 점검하고 일부를 수정했습니다.
-
-### ✅ 수정한 항목
-
-**1) CPU 격리(isolcpus)를 실제로 사용하도록 연결**
-- 문제: `step2-os-setup/03-configure-isolcpus.sh` 가 CPU 2,3 을 격리하지만, 어떤 실험 프로세스도 그 코어에 바인딩되지 않았음(매니페스트가 `--cpu` 미전달). 4 vCPU VM에서는 격리만 하면 오히려 코어가 놀고 나머지가 0,1에 몰림.
-- 수정: `talker-job.yaml`, `listener-deployment.yaml` 에 `--cpu=2` 추가 → latency-critical 프로세스를 격리 코어에 고정. (talker.py/listener.py 의 `set_cpu_affinity` 는 실패 시 graceful — 격리 미적용/2vCPU 환경에서도 안전.)
-- 판단 근거: 논문 §III 가 네트워크 데이터플레인을 격리 코어에 dedicate 하므로, 바인딩이 **재현 목적상 의미 있음** → 제거가 아니라 연결을 택함.
-
-**3) 미사용 XDP(802.1Q/AVTP) 프로그램 제거**
-- 확인: 실험 트래픽은 plain UDP(VLAN 태그·AVTP 없음). `xdp_vlan_avtp.c` 는 모든 패킷을 `XDP_PASS` 로만 흘려보내고 분류/우선순위에 관여 안 함 → dead code. talker/listener/결과 CSV 어디에서도 VLAN/AVTP 미사용.
-- 수정: `src/xdp_vlan_avtp.c`, `build/xdp_vlan_avtp.bpf.o` 삭제, `Makefile`·`attach-ebpf.sh`·`deploy-experiment.sh`·`verify-experiment.sh` 에서 XDP attach/검증 제거. 나머지 3개 프로그램(vef/eg/ig) 빌드·동작은 영향 없음(독립 타겟).
-- 참고: XDP VLAN/AVTP 지원은 논문의 기여 중 하나지만, 본 재현 실험에서는 트래픽이 plain UDP라 한 번도 실행되지 않아 제거. 재현하려면 VLAN 태그/AVTP 트래픽을 생성하도록 talker 를 바꿔야 함.
-
-**6) ETF 자동 attach 제거 (TSN 패킷 전량 드롭 위험 차단)**
-- 확인: `talker.py` 는 `SO_TXTIME`/`SCM_TXTIME` 을 설정하지 않고 `sock.sendto()` 만 호출. `sch_etf` 의 `is_packet_valid()` 는 `SOCK_TXTIME` 없는 패킷을 INVALID로 보고 `qdisc_drop()` 함 → ETF가 band 0(tc0=TSN)에 붙으면 priority=3 패킷이 **전량 드롭**됨.
-- 수정: `deploy-experiment.sh:setup_tc_qdisc()` 의 ETF 자동 attach 블록 제거(주석으로 근거 명시). 학습용 참고 구현은 `step5-tc-qdisc/02-setup-etf.sh` 에 경고와 함께 보존.
-- 영향: 기존 VM 실험에서 ETF는 (CLOCK_TAI 부재로) 대개 attach 실패해 prio-only로 동작했음 → 제거해도 동작 동일. 단, ETF가 성공적으로 붙던 환경이라면 이 수정이 **패킷 드롭 버그를 제거**함.
-
-### 📋 점검만 한 항목 (코드 변경 없음 — 근거 포함)
-
-**2) ETF mqprio 우선순위 매핑 — 역전 아님 (수정 불필요)**
-- 전제 재검토: "논문은 tc2>tc1>tc0" 은 ETS 게이트 스케줄의 **시간 순서**(`sched-entry S 04`(tc2)→`S 02`(tc1)→`S 01`(tc0)) 를 우선순위로 오해한 것. 게이트 슬롯 크기는 tc0 가 750μs 로 가장 크고(보호 윈도우), ETF 도 tc0 에 붙음 → **tc0 = time-sensitive = 최고 우선순위**.
-- 우리 코드: `prio ... priomap 2 2 1 0` → priority 3 → band 0(최우선). `mqprio map 2 2 1 0` 도 동일. `setup-mqprio.sh` 주석 "tc0 → 큐 1(최고 우선순위, time-sensitive)". → 논문과 일치, 역전 없음.
-- 결론: ETF는 time-sensitive 큐(tc0)에 있어야 정상. tc2 로 옮기면 **오히려 회귀**라 변경하지 않음.
-
-**4) tcx vs clsact 실행 순서 — pkt_stats=0 의 진짜 원인**
-- 위 "결과 해석 > eBPF 카운터가 0인 이유" 절에 정정 반영. 요약: kernel ≥6.6 에서 tcx(Cilium)가 clsact(우리 BPF)보다 먼저 실행되고 비-UNSPEC 을 반환해 우리 프로그램이 스킵됨. 실험 결과는 SO_PRIORITY+prio 로 정상. attach 순서 변경은 Cilium 간섭 위험 + 실험 무관이라 하지 않음.
-
-**5) mqprio vs prio — 실제로는 prio 적용 중**
-- 추적: `deploy-experiment.sh:setup_tc_qdisc()` 는 `txq_count = ls /sys/class/net/$IF/queues/tx-*` 가 3 이상일 때만 mqprio 시도. VM virtio NIC 는 TX queue 1개 → mqprio 건너뜀 → `prio bands 3 priomap 2 2 1 0` 적용.
-- 결론: **현재 실제 적용 qdisc 는 `prio`(소프트웨어 strict-priority 3밴드)**. 멀티큐(mqprio)는 VM에 하드웨어 큐가 없어 비활성. (멀티큐를 켜려면 호스트/하이퍼바이저가 virtio multiqueue 를 노출해야 함.)
-
-**7) mqprio+ETF+ETS 통합 스크립트를 메인으로 못 쓰는 기술적 이유**
-- `setup-all-qdisc.sh`(taprio+ETF)는 VM에서 **attach 자체는 가능**하나, 다음 이유로 논문 결과를 충실히 재현할 수 없음:
-  1. **ETF child 가 TSN 패킷 전량 드롭** (항목 6 — talker가 SCM_TXTIME 미사용).
-  2. **software taprio 게이트 정밀도** 가 hrtimer(VM ~수십 μs) 에 의존 → 논문의 하드웨어 ns 정밀도 미달.
-  3. **CLOCK_TAI base-time 불일치**: `base-time=$(date +%s)…`(REALTIME) 인데 `clockid CLOCK_TAI` → TAI-UTC 오프셋(~37s)만큼 스케줄 어긋남.
-  4. **talker 가 게이트와 비동기**(sleep 페이싱, PTP 부정확) → tc0 게이트가 1ms 중 750μs 만 열리므로 패킷이 게이트 대기로 **latency/jitter 증가**.
-- 결론: 통합 스크립트로 전환하면 (드롭/지터 증가로) 실험이 **오히려 깨짐**. VM 환경에서 충실 재현이 불가능한 부분이라, 우선순위 dequeue 의도만 보존한 `prio` 가 가장 유효한 측정을 제공. → 메인 경로 `prio` 유지.
-
-> ⚠️ 위 수정은 Linux VM에서의 런타임 검증이 아직 필요합니다(본 작업은 Windows 호스트에서 코드 정적 분석 + 커널 동작 추론 기반). 특히 `--cpu=2` 바인딩 성공 여부와 prio-only 동작은 VM에서 `bash verify-experiment.sh` 로 확인 권장.
-
----
-
-## 트러블슈팅
-
-### "container runtime is not running"
-```bash
-sudo systemctl restart containerd
-```
-
-### Cilium pod CrashLoopBackOff
-```bash
-kubectl logs -n kube-system -l k8s-app=cilium -c cilium-agent --tail=50
-# BPF fs 미마운트인 경우:
-sudo mount -t bpf bpf /sys/fs/bpf
-```
-
-### eBPF 빌드 실패
-```bash
-cd step6-ebpf
-make clean && make all
-# vmlinux.h not found:
-sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > stub-headers/vmlinux.h
-```
-
-### `mqprio: RTNETLINK answers: Operation not supported`
-VM virtio NIC의 TX queue가 1개라 mqprio 불가. `deploy-experiment.sh`가 자동으로 `prio` 폴백.
-
-### Listener가 패킷을 한 개도 수신 안 함 (results.csv 없음)
-- worker01 노드 Ready 확인: `kubectl get nodes`
-- worker01 NotReady면 VirtualBox에서 해당 VM 재시작
-- CPU 부하 99%는 worker01 다운 위험 → 80% 이하 권장
-
-### sudo 환경에서 `connection refused` (kubectl localhost:8080)
-```bash
-sudo cp /home/worker/.kube/config /root/.kube/config
-```
-
-### baseline_cpu*.csv는 있는데 proposed_cpu*.csv는 없음 (반대도)
-plot-results.py는 한쪽만 있어도 그래프 그리지만 비교는 불완전. 누락된 CPU 부하 다시 실행 권장.
-
-### 시계 오차 때문에 latency가 음수
-plot-results.py는 자동으로 1st percentile을 0으로 보정. 정밀 측정 필요시 PTP/NTP 동기화.
-
----
+## 로드맵
+
+1. VM 클러스터에서 `scripts/experiment.sh matrix` 실행 → `results/k8s/` (veth 리셋·DSCP 를 Cilium 경로에서 재확인)
+2. 출발지 identity 기반 분류(신뢰 경계), IPv6 Traffic Class
+3. 물리 NIC: `mqprio hw`, XPS/IRQ affinity, isolcpus, 하드웨어 PTP + `SO_TIMESTAMPING`
+4. 스위치 QoS(trust DSCP, strict-priority 큐)와 RoCE/PFC 클래스 공존 실험
 
 ## 참고
-- 논문: Wen Yong et al., *"A Time-Sensitive Cloud-Native Network Based on eBPF"*, 2024 IEEE 27th International Conference on Computer Supported Cooperative Work in Design (CSCWD), 2024.
-- Cilium: https://docs.cilium.io
-- TC qdisc: `man tc-prio`, `man tc-mqprio`, `man tc-etf`
-- eBPF tcx vs clsact: https://docs.cilium.io/en/stable/bpf/architecture/
+
+- J. Wen, J. Ge, Z. Zhang, H. Li, Y. E, B. Wu, "A time-sensitive cloud-native network based on eBPF," *Proc. 27th IEEE CSCWD*, 2024, pp. 2577–2582. DOI 10.1109/CSCWD61410.2024.10580477
+- Linux: `include/linux/netdevice.h` `____dev_forward_skb`, `net/core/dev.c` `sch_handle_egress`, `kernel/bpf/mprog.c`, `net/sched/sch_prio.c`, `net/sched/sch_etf.c`
+- Cilium datapath / tcx: https://docs.cilium.io — 변경 이력: [CHANGELOG.md](CHANGELOG.md)
