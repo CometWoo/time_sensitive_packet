@@ -4,9 +4,8 @@
 """
 from __future__ import annotations
 
-import pytest
-
 import bpf_harness as h
+import pytest
 
 pytestmark = pytest.mark.skipif(
     not (h.is_root() and h.bpftool_available()),
@@ -160,13 +159,17 @@ def test_dscp_not_marked_without_flag(prog):
 def test_dscp_ef_marking_updates_checksum(prog):
     prog.set_config(flags=h.TS_CFG_MARK_DSCP)          # dscp=0 → 기본 EF(46)
     c0 = prog.counters()
-    r = prog.run(h.udp_frame(h.TS_DEFAULT_UDP_PORT, tos=0))
+    orig = h.udp_frame(h.TS_DEFAULT_UDP_PORT, tos=0)
+    r = prog.run(orig)
     tos, csum_ok = h.parse_ipv4_tos_and_csum_ok(r.data_out)
     assert tos == h.TS_DEFAULT_DSCP << 2 == 0xB8
     assert csum_ok, "IPv4 헤더 체크섬이 증분 갱신되어야 한다"
     assert delta(prog, c0, prog.counters())["DSCP_MARKED"] == 1
-    # 나머지 바이트는 그대로
-    assert r.data_out[:15] == r.data_out[:15] and r.data_out[16:24] == h.udp_frame(h.TS_DEFAULT_UDP_PORT)[16:24]
+    # TOS(오프셋 15)와 체크섬(24..25) 외의 바이트는 그대로여야 한다
+    assert len(r.data_out) == len(orig)
+    assert r.data_out[:15] == orig[:15]
+    assert r.data_out[16:24] == orig[16:24]
+    assert r.data_out[26:] == orig[26:]
 
 
 def test_dscp_marking_preserves_ecn_bits(prog):

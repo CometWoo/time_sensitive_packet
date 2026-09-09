@@ -1,0 +1,31 @@
+MIT License
+
+Copyright (c) 2026 CometWoo
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+Exception — eBPF kernel programs
+
+The eBPF programs under step6-ebpf/src/ (ts_classifier.c, prio_probe.c,
+tcx_dummy_ok.c, ts_common.h) and the loader step6-ebpf/tools/tcx_attach.c are
+licensed under the GNU General Public License v2.0 only (SPDX-License-Identifier:
+GPL-2.0), as marked in each file. GPL licensing is required because the programs
+call GPL-only kernel BPF helpers. See https://www.gnu.org/licenses/old-licenses/gpl-2.0.html

@@ -37,7 +37,7 @@ def main():
             data = sock.recv(65535)
             count += 1
             nbytes += len(data)
-        except socket.timeout:
+        except TimeoutError:
             continue
     print(f"udp_sink: received {count} pkts, {nbytes} bytes", file=sys.stderr)
     if args.stats_file:

@@ -91,7 +91,7 @@ def main():
         while True:
             try:
                 data, tos = recv_one(sock, args.record_tos)
-            except socket.timeout:
+            except TimeoutError:
                 if results:
                     print(f"타임아웃 — 수신 완료 ({len(results)} 패킷)")
                     break

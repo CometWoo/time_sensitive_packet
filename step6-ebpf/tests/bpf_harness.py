@@ -56,7 +56,7 @@ SRC_MAC = bytes.fromhex("112233445566")
 def ip_checksum(hdr: bytes) -> int:
     if len(hdr) % 2:
         hdr += b"\x00"
-    s = sum(struct.unpack("!%dH" % (len(hdr) // 2), hdr))
+    s = sum(struct.unpack(f"!{len(hdr) // 2}H", hdr))
     while s >> 16:
         s = (s & 0xFFFF) + (s >> 16)
     return (~s) & 0xFFFF
