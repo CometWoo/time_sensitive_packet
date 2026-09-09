@@ -164,6 +164,12 @@ static __always_inline int classify(struct __sk_buff *skb, const struct ts_confi
 		ihl = ip->ihl * 4;              /* 4-bit 필드 → 0..60, 옵션 포함 길이 */
 		if (ihl < sizeof(*ip))
 			goto done;
+		/* IP 단편은 TS 로 보지 않는다 (커널 ip_is_fragment() 와 같은 판정).
+		 * 첫 단편에만 UDP 헤더가 있고 뒤 단편에는 없으므로, 포트로 분류하면 한 데이터그램의
+		 * 조각들이 서로 다른 밴드로 갈라져 재조립 지연·재정렬을 만든다. 128 B TS 패킷은
+		 * 단편화되지 않으므로 실험에는 영향이 없다. */
+		if (ip->frag_off & bpf_htons(TS_IP_MF | TS_IP_OFFSET))
+			goto done;
 		pr->ip_off = off;
 
 		/* 분류 3: UDP 목적지 포트 */

@@ -58,6 +58,8 @@ def main():
     parser.add_argument("--start-delay", type=float, default=0.0, help="송신 시작 전 대기(초)")
     parser.add_argument("--log", default="", help="송신 드리프트 로그 CSV 경로")
     parser.add_argument("--quiet", action="store_true", help="진행 로그 생략")
+    parser.add_argument("--strict-pacing", action="store_true",
+                        help="송신 수/실효 속도가 목표의 95 %% 미만이면 exit 3 (기본: 경고만)")
     args = parser.parse_args()
 
     interval_s = args.interval / 1000.0
@@ -91,16 +93,21 @@ def main():
     if args.start_delay > 0:
         time.sleep(args.start_delay)
 
+    # 페이싱은 CLOCK_MONOTONIC(NTP 스텝에 영향받지 않음), 패킷 스탬프는 CLOCK_REALTIME(수신측과 비교용)
     sent = errors = 0
-    start_time = time.time_ns()
+    drifts_us = []               # 예정 시각 대비 실제 송신 시각 (송신 페이싱 품질)
+    interval_ns = int(interval_s * 1e9)
+    start_mono = time.monotonic_ns()
+    start_wall = time.time_ns()
     try:
         for seq in range(args.count):
-            scheduled_ns = start_time + int(seq * interval_s * 1e9)
-            now = time.time_ns()
+            scheduled_ns = start_mono + seq * interval_ns
+            now = time.monotonic_ns()
             while now < scheduled_ns:
                 if scheduled_ns - now > 500_000:
                     time.sleep((scheduled_ns - now - 200_000) / 1e9)   # 0.5 ms 이상 남으면 sleep
-                now = time.time_ns()                                   # 마지막 ~200 us 는 busy-wait
+                now = time.monotonic_ns()                              # 마지막 ~200 us 는 busy-wait
+            drifts_us.append((now - scheduled_ns) / 1000.0)
 
             send_time_ns = time.time_ns()
             try:
@@ -112,18 +119,33 @@ def main():
                     print(f"전송 오류 #{seq}: {e}")
 
             if log_file:
-                log_file.write(f"{seq},{send_time_ns},{scheduled_ns},{(send_time_ns - scheduled_ns) / 1000.0:.2f}\n")
+                log_file.write(f"{seq},{send_time_ns},{start_wall + seq * interval_ns},{drifts_us[-1]:.2f}\n")
             if not args.quiet and (seq + 1) % 1000 == 0:
-                elapsed = (time.time_ns() - start_time) / 1e9
+                elapsed = (time.monotonic_ns() - start_mono) / 1e9
                 print(f"  진행: {seq + 1}/{args.count} ({(seq + 1) / elapsed:.0f} pkt/s)")
     except KeyboardInterrupt:
         print("중단됨")
 
-    elapsed = max((time.time_ns() - start_time) / 1e9, 1e-9)
-    print(f"전송 완료: {sent}/{args.count} (오류 {errors}), {elapsed:.2f}s, {sent / elapsed:.1f} pkt/s")
+    elapsed = max((time.monotonic_ns() - start_mono) / 1e9, 1e-9)
+    achieved = sent / elapsed
+    target_rate = 1.0 / interval_s
+    print(f"전송 완료: {sent}/{args.count} (오류 {errors}), {elapsed:.2f}s, {achieved:.1f} pkt/s (목표 {target_rate:.0f})")
+    if drifts_us:
+        d = sorted(drifts_us)
+        n = len(d)
+        stalls = sum(1 for v in drifts_us if v > 10_000)
+        print(f"송신 페이싱 드리프트 (us): p50={d[n // 2]:.1f} p99={d[int(n * 0.99)]:.1f} max={d[-1]:.1f}; "
+              f"10 ms 초과 스톨 {stalls}회")
     if log_file:
         log_file.close()
     sock.close()
+
+    # 데이터 품질 게이트: 목표의 95 % 미만이면 실험이 교란된 것 (DNS/CFS quota/CPU 경쟁 신호)
+    if sent < args.count or achieved < 0.95 * target_rate:
+        print(f"WARNING: 페이싱 실패 — 송신 {sent}/{args.count}, 실효 {achieved:.0f}/{target_rate:.0f} pkt/s. "
+              "이 run 의 latency/jitter 는 송신측 교란을 포함합니다.")
+        if args.strict_pacing:
+            raise SystemExit(3)
 
 
 if __name__ == "__main__":

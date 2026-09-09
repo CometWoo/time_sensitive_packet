@@ -73,12 +73,17 @@ def vlan(pcp: int, vid: int, inner_ethertype: int, payload: bytes, tpid: int = 0
     return struct.pack("!HH", tci, inner_ethertype) + payload
 
 
+IP_MF = 0x2000
+IP_OFFSET_MASK = 0x1FFF
+
+
 def ipv4(proto: int, payload: bytes, tos: int = 0, options: bytes = b"",
-         src="10.0.0.1", dst="10.0.0.2", ttl: int = 64) -> bytes:
+         src="10.0.0.1", dst="10.0.0.2", ttl: int = 64, frag_off: int = 0) -> bytes:
+    """frag_off: 플래그+오프셋 필드 그대로 (예: IP_MF | 0 = 첫 단편, 185 = 뒤 단편)"""
     assert len(options) % 4 == 0
     ihl = 5 + len(options) // 4
     total = ihl * 4 + len(payload)
-    hdr = struct.pack("!BBHHHBBH4s4s", (4 << 4) | ihl, tos, total, 0x1234, 0, ttl, proto, 0,
+    hdr = struct.pack("!BBHHHBBH4s4s", (4 << 4) | ihl, tos, total, 0x1234, frag_off, ttl, proto, 0,
                       bytes(map(int, src.split("."))), bytes(map(int, dst.split(".")))) + options
     csum = ip_checksum(hdr)
     hdr = hdr[:10] + struct.pack("!H", csum) + hdr[12:]

@@ -32,17 +32,25 @@ def set_cpu_affinity(cpu_id):
         print(f"CPU affinity 설정 실패: {e} (무시하고 계속)")
 
 
-def recv_one(sock, record_tos):
-    """(data, tos) 반환. tos 는 --record-tos 가 아니면 None."""
-    if not record_tos:
+SO_TIMESTAMPNS_NEW = getattr(socket, "SO_TIMESTAMPNS_NEW", 64)   # Linux, asm-generic/socket.h
+SCM_TIMESTAMPNS_NEW = SO_TIMESTAMPNS_NEW
+
+
+def recv_one(sock, record_tos, kernel_ts):
+    """(data, tos, kernel_recv_ns) 반환. 사용하지 않는 항목은 None."""
+    if not record_tos and not kernel_ts:
         data, _addr = sock.recvfrom(65535)
-        return data, None
-    data, ancdata, _flags, _addr = sock.recvmsg(65535, socket.CMSG_SPACE(4))
-    tos = -1
+        return data, None, None
+    data, ancdata, _flags, _addr = sock.recvmsg(65535, socket.CMSG_SPACE(4) + socket.CMSG_SPACE(16))
+    tos = -1 if record_tos else None
+    kts = None
     for level, ctype, cdata in ancdata:
         if level == socket.IPPROTO_IP and ctype == socket.IP_TOS:
             tos = cdata[0]
-    return data, tos
+        elif level == socket.SOL_SOCKET and ctype == SCM_TIMESTAMPNS_NEW and len(cdata) >= 16:
+            sec, nsec = struct.unpack("qq", cdata[:16])     # struct __kernel_timespec
+            kts = sec * 1_000_000_000 + nsec
+    return data, tos, kts
 
 
 def main():
@@ -58,6 +66,9 @@ def main():
                         help="IP_RECVTOS 로 수신 TOS(DSCP<<2|ECN) 를 tos 컬럼에 기록 (Linux)")
     parser.add_argument("--ready-file", default="",
                         help="bind 완료 후 이 파일을 생성 (오케스트레이션용)")
+    parser.add_argument("--kernel-ts", action="store_true",
+                        help="SO_TIMESTAMPNS_NEW 로 커널 RX 타임스탬프를 recv_kernel_ns 컬럼에 추가 기록 "
+                             "(latency_ms 는 그대로 사용자 공간 recv_ns 기준 — 기존 결과와 정의 동일)")
     parser.add_argument("--quiet", action="store_true", help="진행 로그 생략")
     args = parser.parse_args()
 
@@ -67,10 +78,12 @@ def main():
         set_cpu_affinity(args.cpu)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # SO_REUSEADDR 은 쓰지 않는다: 이전 listener 가 살아 있으면 조용히 포트를 나눠 갖는 대신 bind 가 실패해야 한다
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
     if args.record_tos:
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_RECVTOS, 1)
+    if args.kernel_ts:
+        sock.setsockopt(socket.SOL_SOCKET, SO_TIMESTAMPNS_NEW, 1)
     sock.bind(("0.0.0.0", args.port))
     sock.settimeout(args.timeout)
 
@@ -90,7 +103,7 @@ def main():
     try:
         while True:
             try:
-                data, tos = recv_one(sock, args.record_tos)
+                data, tos, kernel_ns = recv_one(sock, args.record_tos, args.kernel_ts)
             except TimeoutError:
                 if results:
                     print(f"타임아웃 — 수신 완료 ({len(results)} 패킷)")
@@ -125,6 +138,8 @@ def main():
             }
             if args.record_tos:
                 row["tos"] = tos
+            if args.kernel_ts:
+                row["recv_kernel_ns"] = kernel_ns if kernel_ns is not None else -1
             results.append(row)
 
             if not args.quiet and len(results) % 1000 == 0:
@@ -144,12 +159,24 @@ def main():
     latencies = sorted(r["latency_ms"] for r in results)
     jitters = sorted(abs(r["jitter_us"]) for r in results[1:])
     n = len(latencies)
-    expected = results[-1]["seq"] - results[0]["seq"] + 1
-    loss = expected - len(results)
+    # 손실은 고유 seq 기준으로: 중복은 손실을 가리지 않고, 재정렬은 '최대 seq 보다 작은 seq' 로 센다
+    seqs = [r["seq"] for r in results]
+    unique = len(set(seqs))
+    expected = max(seqs) - min(seqs) + 1
+    loss = expected - unique
+    dups = len(seqs) - unique
+    reorders = 0
+    max_seen = -1
+    for s in seqs:
+        if s < max_seen:
+            reorders += 1
+        else:
+            max_seen = s
 
     print("-" * 60)
     print(f"총 수신: {len(results)} 패킷, 구간 {elapsed_s:.2f}s, "
-          f"BW {total_bytes / elapsed_s / 1024:.1f} KB/s, 손실 {loss}/{expected} ({loss / expected * 100:.2f}%)")
+          f"BW {total_bytes / elapsed_s / 1024:.1f} KB/s, 손실 {loss}/{expected} ({loss / expected * 100:.2f}%), "
+          f"중복 {dups}, 재정렬 {reorders}")
     print(f"Latency (ms): p50={latencies[n // 2]:.3f} p99={latencies[int(n * 0.99)]:.3f} max={latencies[-1]:.3f}")
     if jitters:
         m = len(jitters)

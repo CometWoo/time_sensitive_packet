@@ -118,7 +118,7 @@ run_one() {   # $1 = condition, $2 = run index
     ip netns exec $RECV_NS python3 "$HERE/udp_sink.py" --port $BE_PORT --stats-file "$dir/sink.json" &
     local sink_pid=$!
     ip netns exec $RECV_NS python3 "$LISTENER" --port $TS_PORT --interval $INTERVAL_MS --timeout 3 \
-        --record-tos --ready-file "$dir/listener.ready" --output "$dir/results.csv" --quiet > "$dir/listener.log" 2>&1 &
+        --record-tos --kernel-ts --ready-file "$dir/listener.ready" --output "$dir/results.csv" --quiet > "$dir/listener.log" 2>&1 &
     local listener_pid=$!
     wait_file "$dir/listener.ready" || { echo "listener 시작 실패"; cat "$dir/listener.log"; exit 1; }
 

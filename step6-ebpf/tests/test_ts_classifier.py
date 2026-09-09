@@ -125,6 +125,21 @@ def test_truncated_ipv4_header_is_safe(prog):
     assert delta(prog, c0, prog.counters())["PARSE_SHORT"] == 1
 
 
+def test_ipv4_first_fragment_is_normal(prog):
+    """단편은 TS 로 보지 않는다 — 첫 단편(MF=1)에 UDP:6000 헤더가 있어도 마찬가지."""
+    frame = h.eth(0x0800, h.ipv4(17, h.udp(h.TS_DEFAULT_UDP_PORT), frag_off=h.IP_MF))
+    r = prog.run(frame, ctx_priority=0)
+    assert r.priority == 0
+
+
+def test_ipv4_later_fragment_with_port_like_bytes_is_normal(prog):
+    """뒤 단편(offset>0)의 payload 첫 바이트가 우연히 포트 6000 처럼 보여도 분류하지 않는다."""
+    fake_udp_looking_payload = b"\x30\x39\x17\x70" + b"\x00" * 60   # sport 12345, dport 6000
+    frame = h.eth(0x0800, h.ipv4(17, fake_udp_looking_payload, frag_off=185))
+    r = prog.run(frame, ctx_priority=0)
+    assert r.priority == 0
+
+
 def test_truncated_udp_header_is_normal(prog):
     ip = h.ipv4(17, b"\x30\x39\x17\x70")   # UDP header cut after dport
     r = prog.run(h.eth(0x0800, ip))
