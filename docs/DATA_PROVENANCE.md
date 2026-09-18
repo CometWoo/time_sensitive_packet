@@ -1,6 +1,6 @@
 # 데이터 출처 (Data provenance)
 
-모든 결과 파일이 **어떤 코드·구성·환경에서** 나왔는지 기록한다. 결과 표를 볼 때 이 표를 먼저 본다.
+모든 결과 파일이 어떤 코드·구성·환경에서 나왔는지 기록한다. 결과 표를 볼 때 이 표를 먼저 본다.
 
 ## A. `results/testbed/ci-34294518788/` — 2026-09-09, GitHub Actions (유효)
 
@@ -36,12 +36,12 @@
 | 항목 | 값 |
 |---|---|
 | 커밋 | 데이터 `8fc0be1`(cpu10, proposed 30/50/70/99), `55394ca`(baseline 30/50/70); 코드 구성은 `8fc0be1` |
-| 환경 | Ubuntu 24.04, kernel 6.x(≥ 6.6, tcx), kubeadm 1.30, containerd 2.x, Cilium 1.19 native routing, VirtualBox 4 vCPU/4 GB × 2, virtio-net 1 TX 큐, NAT 네트워크 |
-| 워크로드 | talker Job(master) → listener Deployment(worker01), UDP **5000**, 128 B, 목표 1 ms × 10,000; `sendto(service-name)` → 패킷마다 DNS; CPU limit 500m; `--cpu` 고정 없음 |
+| 환경 | Ubuntu 24.04, kernel 6.x(≥ 6.6, tcx), kubeadm 1.30, containerd 2.x, Cilium 1.19 native routing, VirtualBox 4 vCPU/4 GB × 2, virtio-net 1 TX 큐, NAT network |
+| 워크로드 | talker Job(master) → listener Deployment(worker01), UDP 5000, 128 B, 목표 1 ms × 10,000; `sendto(service-name)` → 패킷마다 DNS; CPU limit 500m; `--cpu` 고정 없음 |
 | 우선순위 | Pod 소켓 `SO_PRIORITY=3` (양쪽 모드 동일) → veth 에서 0 으로 리셋 |
 | proposed qdisc | `prio bands 3 priomap 2 2 1 0 2 2 2 2 2 2 2 2 2 2 2 2` (priority 0 → band 2) |
 | baseline qdisc | root 삭제 → 배포판 기본(fq_codel) |
-| eBPF | veth_filter/egress/ingress(clsact) + xdp generic — Cilium tcx 순서로 **미실행**, 카운터 0 |
+| eBPF | veth_filter/egress/ingress(clsact) + xdp generic — Cilium tcx 순서로 미실행, 카운터 0 |
 | 경쟁 트래픽 | 없음. stress-ng DaemonSet 이 양 노드에 CPU 부하만 |
 | 손실/중복/재정렬 | 0 / 0 / 0 (전 파일) |
 | 미측정 | baseline_cpu99 (worker VM 응답 불능) |

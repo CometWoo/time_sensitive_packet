@@ -1,6 +1,6 @@
-# 아키텍처 — 패킷이 지나는 길과 우선순위가 살아남는 지점
+# architecture — 패킷이 지나는 길과 우선순위가 살아남는 지점
 
-## 1. 데이터패스 (v2, 2026-09)
+## 1. datapath (v2, 2026-09)
 
 ```mermaid
 flowchart LR
@@ -34,7 +34,7 @@ flowchart LR
 | `bpf/tools/tcx_attach.c` | libbpf tcx 링크 attach (BPF_F_BEFORE/AFTER, pin, query) | CI (kernel 6.17) |
 | `testbed/` | netns 토폴로지(Pod ↔ veth ↔ host ↔ veth), tbf 병목, BE 홍수, 조건별 러너, 메타데이터 | WSL2(기능), CI(경합) |
 | `workload/` | talker/listener + K8s 매니페스트(kustomize) | 테스트베드에서 같은 파일 사용 |
-| `scripts/experiment.sh` | K8s 클러스터 실험 오케스트레이션 (HTB + u32 + 조건 qdisc + tcx attach + Job/DaemonSet) | **클러스터 미실행** |
+| `scripts/experiment.sh` | K8s cluster 실험 오케스트레이션 (HTB + u32 + 조건 qdisc + tcx attach + Job/DaemonSet) | cluster 미실행 |
 | `analysis/` | 통계·그래프·리포트 (`tsn-analysis`) | 65 pytest |
 | `.github/workflows/` | lint / BPF build+test+tcx / analysis / testbed 실험 | 실행 중 |
 

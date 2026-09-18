@@ -1,14 +1,14 @@
 # Architecture Decision Records (설계 결정 기록)
 
-이 프로젝트에서 "왜 이렇게 했는가" 를 남긴 문서들이다. 각 ADR 은 **문제 → 고려한 대안(장단점) →
-결정 → 결과/한계** 순서로 쓰고, 뒤집힌 결정은 지우지 않고 "대체됨" 으로 남긴다. 코드 주석이
+이 프로젝트에서 "왜 이렇게 했는가" 를 남긴 문서들이다. 각 ADR 은 문제 → 고려한 대안(장단점) →
+결정 → 결과/한계 순서로 쓰고, 뒤집힌 결정은 지우지 않고 "대체됨" 으로 남긴다. 코드 주석이
 `ADR-000N` 으로 이 문서를 가리킨다.
 
 | 번호 | 제목 | 한 줄 요약 |
 |---|---|---|
 | [0001](0001-virtualbox-vms-instead-of-physical-tsn-nics.md) | 물리 TSN NIC 대신 VirtualBox VM + netns 테스트베드 | 예산 0 으로 구조를 재현하고, 커널 메커니즘은 netns/CI 에서 검증 |
 | [0002](0002-prio-instead-of-mqprio-etf-taprio.md) | mqprio/ETF/taprio 대신 소프트웨어 strict-priority qdisc | 1 TX 큐 virtio, SO_TXTIME 없는 talker, TAI/REALTIME 불일치 등 실패 기록 |
-| [0003](0003-classify-at-host-nic-egress.md) | **TS 분류·마킹은 호스트 물리 NIC egress 에서** | `____dev_forward_skb()` 가 veth 통과 시 priority 를 0 으로 — Pod 안 설정은 무효 (실측 27,110/27,110) |
+| [0003](0003-classify-at-host-nic-egress.md) | TS 분류·마킹은 호스트 물리 NIC egress 에서 | `____dev_forward_skb()` 가 veth 통과 시 priority 를 0 으로 — Pod 안 설정은 무효 (실측 27,110/27,110) |
 | [0004](0004-non-ts-priority-untouched.md) | 비-TS 패킷의 priority 는 건드리지 않는다 | 관찰자 원칙, 대조군 오염 방지 |
 | [0005](0005-tcx-before-cilium.md) | Cilium(tcx) 앞에 BPF_F_BEFORE + TC_ACT_UNSPEC | tcx 프로그램이 OK 를 반환하면 legacy clsact 는 실행되지 않음 |
 | [0006](0006-testbed-needs-contention.md) | 병목 링크 + 경쟁 트래픽이 있어야 우선순위 실험이다 | tbf/HTB 아래 조건 qdisc, 30 Mbit/s BE 홍수 |

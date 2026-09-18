@@ -17,8 +17,8 @@
 | python `sendto(hostname)` 은 호출마다 이름을 해석한다 | strace (20 sendto → 20 DNS 질의) | ADR-0008 | 확인 |
 | 5월 talker 실효 216–547 pkt/s | CSV `send_ns` 재계산 | DATA_PROVENANCE §B | 확인 |
 | 통계 함수(백분위·부트스트랩·Cliff's δ O(n log n) vs O(n²)) | pytest 65개 | CI `analysis` 잡 | 통과 |
-| 셸 스크립트 / 파이썬 / 매니페스트 문법 | shellcheck, ruff, kubeconform | CI `lint` 잡 | 실행 중 |
-| **K8s 클러스터(Cilium)에서 새 설계가 동작한다** | — | — | **미검증** (VM 접근 불가). `scripts/experiment.sh` 는 정적 검토·shellcheck 만 |
+| 셸 script / 파이썬 / 매니페스트 문법 | shellcheck, ruff, kubeconform | CI `lint` 잡 | 실행 중 |
+| K8s cluster(Cilium)에서 새 설계가 동작한다 | — | — | 미검증 (VM 접근 불가). `scripts/experiment.sh` 는 정적 검토·shellcheck 만 |
 | Cilium 재시작 후 tcx 순서 유지 | — | `scripts/verify.sh` 가 순서를 검사하도록 설계 | 미검증 |
 | VirtualBox NAT 가 DSCP 를 보존 | — | — | 미검증 |
 | 물리 NIC 멀티큐/mqprio hw/PTP | — | — | 하드웨어 없음 |

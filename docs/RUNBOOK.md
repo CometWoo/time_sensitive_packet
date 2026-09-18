@@ -6,7 +6,7 @@
 |---|---|---|
 | A. eBPF 단위·통합 테스트 | 분류 규칙, DSCP/체크섬, tcx 체인 순서 | Linux(WSL2 가능), root, clang/libbpf/bpftool |
 | B. netns 테스트베드 | veth priority 리셋, 경합 하 qdisc 비교, DSCP end-to-end | Linux root; 경합 실험엔 `sch_tbf`/`sch_prio` 모듈 (GitHub Actions 러너 OK, WSL2 는 기능 검증만) |
-| C. Kubernetes/Cilium 클러스터 | 실제 CNI 데이터패스에서의 동작 | VM 2대(kubeadm + Cilium ≥ 1.16, kernel ≥ 6.6) — **미실행 상태** |
+| C. Kubernetes/Cilium cluster | 실제 CNI datapath에서의 동작 | VM 2대(kubeadm + Cilium ≥ 1.16, kernel ≥ 6.6) — 미실행 상태 |
 
 ## A. eBPF 빌드와 테스트
 
@@ -50,10 +50,10 @@ make report OUT=testbed/runs/local          # testbed/runs/local/report/{summary
 
 토폴로지만 올리고 내리기: `sudo bash testbed/topology.sh up|status|down`.
 
-## C. Kubernetes / Cilium 클러스터
+## C. Kubernetes / Cilium cluster
 
 전제: VM 2대(control-plane = sender, worker = receiver), kernel ≥ 6.6, kubeadm 1.30, Cilium ≥ 1.16(tcx), 두 노드 모두
-`clang libbpf-dev linux-libc-dev bpftool`. 설치 참고 스크립트: `scripts/setup/` (실측 환경과 완전히 같지는 않음 — 각 파일 머리의 STATUS 참조).
+`clang libbpf-dev linux-libc-dev bpftool`. 설치 참고 script: `scripts/setup/` (실측 환경과 완전히 같지는 않음 — 각 파일 머리의 STATUS 참조).
 
 ```bash
 cp experiment.env.example experiment.env        # PHYS_IF, SHAPE_MBPS=20, FLOOD_MBPS=30, TS_COUNT, MARK_DSCP=1 ...

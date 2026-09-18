@@ -15,10 +15,10 @@
 ## 결정
 
 - `bpf/build/` 는 `.gitignore`. 소스와 `Makefile`(`-Wall -Werror`)만 커밋한다.
-- GitHub Actions `ci.yml` 이 매 push 마다 clang 18 로 빌드하고, **커널 verifier 로드**
-  (`bpftool prog load`), **BPF_PROG_TEST_RUN 단위 테스트 24개**, kernel ≥ 6.6 러너에서
-  **tcx 체인 통합 테스트**까지 통과시킨 뒤 `.bpf.o` 와 `tcx_attach` 를 아티팩트로 올린다.
-- 클러스터 노드에는 `clang llvm libbpf-dev linux-libc-dev` 를 설치한다(`scripts/setup/02`).
+- GitHub Actions `ci.yml` 이 매 push 마다 clang 18 로 빌드하고, 커널 verifier 로드
+  (`bpftool prog load`), BPF_PROG_TEST_RUN 단위 테스트 24개, kernel ≥ 6.6 러너에서
+  tcx 체인 통합 테스트까지 통과시킨 뒤 `.bpf.o` 와 `tcx_attach` 를 아티팩트로 올린다.
+- cluster 노드에는 `clang llvm libbpf-dev linux-libc-dev` 를 설치한다(`scripts/setup/02`).
   빌드 도구를 못 놓는 노드는 CI 아티팩트를 받아 쓴다.
 
 ## 왜 뒤집었나
@@ -26,7 +26,7 @@
 - 바이너리 diff 는 리뷰 불가능하고, 소스와 어긋난 채 남기 쉽다(실제로 5월 결과는 트리에 없는
   구성으로 측정됐다 — [ADR-0016](0016-results-provenance.md)).
 - 이 저장소의 핵심 주장은 "BPF 프로그램이 verifier 를 통과하고 의도대로 분류한다" 이며, 그것을
-  증명하는 방법은 커밋된 바이너리가 아니라 **재현 가능한 빌드 + 테스트 로그** 다.
+  증명하는 방법은 커밋된 바이너리가 아니라 재현 가능한 빌드 + 테스트 로그 다.
 - BTF/`-g` 로 빌드된 오브젝트는 컴파일러 버전마다 달라져 커밋할 때마다 잡음이 생긴다.
 
 ## 고려한 대안
@@ -34,4 +34,4 @@
 | 대안 | 비고 |
 |---|---|
 | CO-RE + vmlinux.h + 스켈레톤 | 이 프로그램은 `struct __sk_buff` 와 UAPI 만 쓰므로 CO-RE 가 필요 없다. 커널 내부 구조체를 읽게 되면 도입 |
-| 컨테이너 이미지로 빌드 환경 고정 | CI 러너의 apt 툴체인으로 충분. 필요 시 `Dockerfile.build` 추가 |
+| container 이미지로 빌드 환경 고정 | CI 러너의 apt 툴체인으로 충분. 필요 시 `Dockerfile.build` 추가 |

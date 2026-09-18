@@ -10,12 +10,12 @@ reproduction could not have worked, then redesigning and verifying it.
 
 ## Findings
 
-1. **`skb->priority` does not survive a veth crossing.** `____dev_forward_skb()` sets `skb->priority = 0`
+1. `skb->priority` does not survive a veth crossing. `____dev_forward_skb()` sets `skb->priority = 0`
    for every forwarded packet (`include/linux/netdevice.h`, v5.15 L4140 / v6.8 L4110; reached from
    `veth_xmit → veth_forward_skb → __dev_forward_skb`). Anything a Pod sets — `SO_PRIORITY` or a BPF
    program on the Pod's own `eth0` — reaches the host qdisc as 0. Measured with a priority histogram probe:
    52,858 / 52,858 packets arrive at the host side with priority 0 although the sender set 6.
-2. **On kernel ≥ 6.6, Cilium's tcx programs hide legacy `clsact` filters.** `sch_handle_egress()` runs
+2. On kernel ≥ 6.6, Cilium's tcx programs hide legacy `clsact` filters. `sch_handle_egress()` runs
    `tcx_run()` first and only falls through to `tc_run()` when the chain returns `TC_ACT_UNSPEC`. Cilium's
    `cil_to_netdev` returns `TC_ACT_OK`, so a `tc filter … bpf` classifier is never executed (CI integration
    test: 0/21 hits; attached with `BPF_F_BEFORE` and returning `TCX_NEXT`: 20/22).
@@ -26,9 +26,9 @@ reproduction could not have worked, then redesigning and verifying it.
 
 ## Redesign (v2)
 
-- `bpf/src/ts_classifier.c` — classifier at the **host physical NIC egress** (just before the qdisc):
+- `bpf/src/ts_classifier.c` — classifier at the host physical NIC egress (just before the qdisc):
   AVTP EtherType / 802.1Q·802.1ad outer PCP ≥ 5 / IPv4-UDP destination port (compile-time 6000 + runtime map)
-  → `skb->priority = 6`; non-TS packets untouched; IP fragments ignored; optional **DSCP EF marking** with
+  → `skb->priority = 6`; non-TS packets untouched; IP fragments ignored; optional DSCP EF marking with
   incremental IPv4 checksum update; per-CPU counters; returns `TC_ACT_UNSPEC` so Cilium still runs.
 - `tools/tcx_attach.c` — libbpf link-based tcx attach with `BPF_F_BEFORE` / `BPF_F_AFTER`, pinning, chain query.
 - `testbed/` — single-host netns testbed mimicking Pod ↔ veth ↔ host ↔ NIC: `tbf` bottleneck (20 Mbit/s),
@@ -37,8 +37,8 @@ reproduction could not have worked, then redesigning and verifying it.
 - `analysis/` — `tsn-analysis`: linear percentiles, bootstrap CIs, Mann-Whitney U, Cliff's δ, loss/dup/reorder,
   throughput from timestamps, plots and Markdown/JSON reports (65 tests).
 - K8s orchestration (`scripts/experiment.sh`, kustomize manifests): HTB bottleneck class keyed on the listener
-  IP, BE flood Job, condition names shared with the testbed, per-run metadata. **Not yet executed on the
-  cluster** (no VM access at the time of writing).
+  IP, BE flood Job, condition names shared with the testbed, per-run metadata. Not yet executed on the
+  cluster (no VM access at the time of writing).
 
 ## Headline result (GitHub Actions runner, kernel 6.17, 3 runs × 10,000 packets per condition)
 
@@ -47,8 +47,8 @@ reproduction could not have worked, then redesigning and verifying it.
 | `fifo` (pfifo) | no | 431.3 / 543.7 | 35.2 % | 0 |
 | `fq_codel` (Linux default) | no | 0.42 / 0.73 | 0 | 0 |
 | `pfifo_fast_noclsf` (priority 0) | no | 433.2 / 538.9 | 38.9 % | 0 |
-| `pfifo_fast_clsf` | **yes** | **0.05 / 0.17** | **0** | **46 (EF)** |
-| `prio_clsf` | **yes** | **0.05 / 0.18** | **0** | **46 (EF)** |
+| `pfifo_fast_clsf` | yes | 0.05 / 0.17 | 0 | 46 (EF) |
+| `prio_clsf` | yes | 0.05 / 0.18 | 0 | 46 (EF) |
 
 `pfifo_fast_noclsf` equals `fifo` (Cliff's δ = −0.22): a 3-band priority queue does nothing when the priority
 never arrives — the real state of the May design. With the classifier, p50 drops ~8,600× and loss goes to zero

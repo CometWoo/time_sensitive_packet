@@ -5,7 +5,7 @@
 
 ## 문제
 
-5월 스크립트는 두 가지 백분위 정의를 섞어 썼고(`compare_results.py` 최근접 순위, `plot-results.py`
+5월 script는 두 가지 백분위 정의를 섞어 썼고(`compare_results.py` 최근접 순위, `plot-results.py`
 numpy 선형 보간), 단일 run 의 점추정만 보고했으며, "개선 −73.7 %" 가 잡음인지 신호인지 말할 수
 없었다. max 는 10,000 개 중 1개 값이라 결론에 쓸 수 없다.
 
@@ -13,7 +13,7 @@ numpy 선형 보간), 단일 run 의 점추정만 보고했으며, "개선 −73
 
 | 항목 | 선택 | 이유 |
 |---|---|---|
-| 백분위 | `numpy.percentile(method="linear")` (Hyndman–Fan type 7) 하나로 통일 | 가장 널리 쓰이는 정의, 두 스크립트 불일치 제거 |
+| 백분위 | `numpy.percentile(method="linear")` (Hyndman–Fan type 7) 하나로 통일 | 가장 널리 쓰이는 정의, 두 script 불일치 제거 |
 | 신뢰구간 | 비모수 부트스트랩 95 % (B=2000, 고정 seed) | latency 분포는 꼬리가 길어 정규 근사 부적합 |
 | 조건 간 검정 | Mann-Whitney U (양측) | 분포 가정 없음, 꼬리 값에 강건. t-검정은 평균 기반이라 outlier 에 취약 |
 | 효과 크기 | Cliff's δ (O(n log n) 구현, 소규모 입력에서 O(n²) 참조 구현과 대조 테스트) | p 값은 n=10,000 이면 무엇이든 유의해 보인다. 크기가 필요 |

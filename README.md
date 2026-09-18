@@ -72,7 +72,7 @@ kernel 내부 probe인 `prio_probe` 측정 결과, veth를 통과한 직후 host
 
 상세한 수치 및 통계 데이터는 [docs/RESULTS.md](docs/RESULTS.md)에서 확인할 수 있습니다.
 
-## 아키텍처
+## architecture
 
 <img width="864" height="648" alt="20260918_020025_e7ac3f84284fced756c38028c715819b" src="https://github.com/user-attachments/assets/867eca2d-7bb1-41eb-a884-52801512f0b8" />
 
@@ -81,15 +81,15 @@ kernel 내부 probe인 `prio_probe` 측정 결과, veth를 통과한 직후 host
 ### 단계별 상세 동작 원리
 
 1. Container 송신 계층: talker 애플리케이션이 1 ms 간격으로 128 byte의 UDP packet을 생성합니다. container 내부에서 socket option `SO_PRIORITY`를 지정하더라도 후속 커널 계층에서 무효화됩니다.
-2. Kernel veth 포워딩 계층: container의 eth0에서 송신된 packet은 kernel 내부 함수 `drivers/net/veth.c:veth_forward_skb()`를 통해 `include/linux/netdevice.h:____dev_forward_skb()`로 전달됩니다. 이 함수는 보안 격리를 목적으로 `skb->priority = 0` 명령을 무조건 실행합니다.
+2. Kernel veth 포워딩 계층: container의 eth0에서 송신된 packet은 kernel 내부 함수 `drivers/net/veth.c:veth_forward_skb()`를 통해 `include/linux/netdevice.h:____dev_forward_skb()`로 전달됩니다. 이 함수는 보안 격리를 목적으로 `skb->priority = 0` 명령을 실행합니다.
 3. CNI 수신 계층: host 측 veth interface에 연결된 Cilium 프로그램 `cil_from_container`가 packet을 수신하여 물리 NIC로 redirect합니다.
 4. Host NIC Egress 분류 계층: 물리 interface의 `sch_handle_egress()` 위치에서 Cilium 프로그램보다 앞선 tcx 체인 맨 앞(`BPF_F_BEFORE`)에 등록된 `ts_classifier`가 실행됩니다. UDP destination port가 6000인 packet을 감지하여 `skb->priority = 6`으로 설정하고 IP header의 DSCP 필드를 46(Expedited Forwarding)으로 갱신한 뒤 `TC_ACT_UNSPEC`을 반환합니다.
 5. Cilium Egress 및 qdisc 계층: 뒤이어 Cilium 프로그램이 정책 검사를 수행하고 `TC_ACT_OK`를 반환하면 커널의 queueing discipline 계층으로 진입합니다. `prio` 또는 `pfifo_fast` qdisc는 `skb->priority` 6 값을 인식하여 band 0(최상위 큐)에 packet을 enqueue하고 최우선으로 내보냅니다.
 6. 수신 및 검증 계층: packet header에 DSCP 46 값이 보존되어 물리 wire를 통과하며, 수신측 listener는 `IP_RECVTOS` option을 통해 DSCP 값이 변조 없이 정상 도착했는지 확인합니다.
 
-상세 아키텍처 분석은 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)를 참조하십시오.
+상세 architecture 분석은 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)를 참조하십시오.
 
-## 아키텍처 설계 결정 기록 (ADR 요약)
+## architecture 설계 결정 기록 (ADR 요약)
 
 프로젝트를 진행하며 직면한 핵심 기술적 난제들과 이를 해결하기 위해 내린 결정들의 요약입니다.
 
@@ -107,7 +107,7 @@ kernel 내부 probe인 `prio_probe` 측정 결과, veth를 통과한 직후 host
 | 0010 | 5개 실험 대조군 설계 | proposed/baseline 2개 vs 5개 독립 조건 | qdisc 자체의 특성과 priority 전달 여부의 인과 관계를 완벽히 분리 | [ADR-0010](docs/adr/0010-qdisc-conditions.md) |
 | 0011 | 우선순위 6 매핑 | priority 3 + 커스텀 맵 vs priority 6 + 기본 priomap | 비특권 container 권한 상한(6) 준수 및 기본 priomap의 band 0 자동 매핑 활용 | [ADR-0011](docs/adr/0011-priority-6-default-priomap.md) |
 | 0012 | 시계 오차 보정 | VM 간 PTP 의존 vs 동일 host 단일 시계 testbed | VM 간 수십 ms 시계 offset 문제를 해결하여 절대 단방향 지연 시간 유효성 확보 | [ADR-0012](docs/adr/0012-clock-skew-and-same-host-testbed.md) |
-| 0013 | 배포 파이프라인 관리 | Docker 이미지 빌드 vs kustomize 기반 ConfigMap 주입 | container build 환경 의존성을 제거하고 원본 Python 소스 코드와의 일관성 유지 | [ADR-0013](docs/adr/0013-configmap-scripts-via-kustomize.md) |
+| 0013 | 배포 pipeline 관리 | Docker 이미지 빌드 vs kustomize 기반 ConfigMap 주입 | container build 환경 의존성을 제거하고 원본 Python 소스 코드와의 일관성 유지 | [ADR-0013](docs/adr/0013-configmap-scripts-via-kustomize.md) |
 | 0014 | 보안 신뢰 경계 정립 | 단순 L4 port 기반 vs 출발지 identity 검증 | L4 port 기반 분류의 테넌트 악용 한계를 명시하고 AIDC 환경 identity 기반 로드맵 제시 | [ADR-0014](docs/adr/0014-udp-port-classification-and-trust-boundary.md) |
 | 0015 | 통계적 분석 엄밀성 | 단순 평균/점추정 vs bootstrap 신뢰구간 및 비모수 검정 | 롱테일 분포 특성을 반영하기 위해 Mann-Whitney U 및 Cliff's delta 통계 도입 | [ADR-0015](docs/adr/0015-statistics.md) |
 | 0016 | 초기 측정 데이터 보존 | 오류 데이터 삭제 vs 실패 분석 데이터로 보존/재해석 | 메커니즘 미작동 원인을 밝혀낸 엔지니어링 교훈을 정직하게 보존 | [ADR-0016](docs/adr/0016-results-provenance.md) |
@@ -128,7 +128,7 @@ kernel 내부 probe인 `prio_probe` 측정 결과, veth를 통과한 직후 host
 
 상세 검증 내역은 [docs/VERIFICATION.md](docs/VERIFICATION.md)를 참조하십시오.
 
-## AI 데이터센터 네트워크(AIDC) 연계성
+## AI 데이터센터 network(AIDC) 연계성
 
 본 프로젝트에서 해결한 host 내부 packet 스케줄링 문제는 대규모 분산 딥러닝 cluster의 network 병목 현상과 밀접하게 맞닿아 있습니다.
 

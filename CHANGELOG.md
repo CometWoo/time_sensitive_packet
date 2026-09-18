@@ -16,7 +16,7 @@
 - CI: lint(shellcheck/ruff/kubeconform), BPF 빌드+테스트+tcx, analysis, testbed 실험 아티팩트.
 - `results/testbed/ci-34294518788/`: kernel 6.17 러너 실측 (fifo p50 433 ms / 손실 35 % → clsf p50 0.05 ms / 손실 0, DSCP 46 도착).
 - 문서: README 재작성, ADR 16개, ARCHITECTURE / RESULTS / LIMITATIONS / VERIFICATION / DATA_PROVENANCE / PAPER_MAPPING / AIDC_RELEVANCE / RUNBOOK.
-- K8s 오케스트레이션 재작성 (HTB 병목 + u32, BE 홍수 Job, kustomize ConfigMap 생성, 조건 이름 통일, meta.json) — **클러스터 미실행**.
+- K8s 오케스트레이션 재작성 (HTB 병목 + u32, BE 홍수 Job, kustomize ConfigMap 생성, 조건 이름 통일, meta.json) — cluster 미실행.
 
 변경
 - talker: 목적지 이름 1회 해석, `--so-priority`/`--tos`; listener: `IP_RECVTOS`, `--ready-file`.
@@ -28,7 +28,7 @@
 ## v0.2 — 2026-06 정적 감사 + 단일 프로그램 재설계 (PR #1, #2)
 
 - XDP 삭제, ETF 자동 attach 제거, stub 헤더 → 실제 UAPI/libbpf 헤더, `--cpu=2` 고정 추가.
-- `vnic_filter.c` 를 Pod eth0 egress 에 nsenter 로 attach 하는 설계 (Windows 정적 분석, 클러스터 미검증 — 이후 v0.3 에서 무효로 판명).
+- `vnic_filter.c` 를 Pod eth0 egress 에 nsenter 로 attach 하는 설계 (Windows 정적 분석, cluster 미검증 — 이후 v0.3 에서 무효로 판명).
 - 3,500줄 CODE_REVIEW.md 작성 후 삭제 (git 이력 `11e49cd` 에 보존).
 
 ## v0.1 — 2026-05 최초 재현 + 측정

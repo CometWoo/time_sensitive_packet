@@ -8,7 +8,7 @@
 논문 Table I 은 VLAN PCP 3 → tc0(TS) 매핑이라 5월 구현은 `SO_PRIORITY=3` + 커스텀 priomap
 `2 2 1 0 2 2 …`(priority 3 → band 0) 을 썼다. 커스텀 priomap 은 (a) 디바이스마다 다시 줘야 하고,
 (b) 실수로 기본 priomap 이 적용되면 3 은 band 1(중간)이며, (c) priority 가 0 으로 리셋되면 이 맵에선
-band **2(최하위)** 로 간다 — 5월 "proposed" 에 실제로 일어난 일.
+band 2(최하위) 로 간다 — 5월 "proposed" 에 실제로 일어난 일.
 
 커널 기본 priomap (`net/sched/sch_generic.c` `prio2band`, `sch_prio.c` 기본값):
 
@@ -20,7 +20,7 @@ band     : 1 2 2 2 1 2 0 0 1 1  1  1  1  1  1  1
 ## 결정
 
 - TS 패킷의 `skb->priority = 6`. 기본 priomap 에서 6, 7 만 band 0 이다.
-- 6 은 `SO_PRIORITY` 를 **CAP_NET_ADMIN 없이** 설정할 수 있는 최대값이다
+- 6 은 `SO_PRIORITY` 를 CAP_NET_ADMIN 없이 설정할 수 있는 최대값이다
   (net/core/sock.c v6.8 L1118-1125: `val >= 0 && val <= 6` 또는 CAP_NET_RAW/CAP_NET_ADMIN).
   애플리케이션이 직접 설정하는 경로와 분류기 경로가 같은 값을 쓴다.
 - `prio` 도 `pfifo_fast` 도 커스텀 priomap 없이 그대로 동작한다.
