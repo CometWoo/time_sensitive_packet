@@ -22,10 +22,9 @@ SOFTWARE.
 
 ---
 
-Exception — eBPF kernel programs
+Exception: eBPF programs
 
-The eBPF programs under step6-ebpf/src/ (ts_classifier.c, prio_probe.c,
-tcx_dummy_ok.c, ts_common.h) and the loader step6-ebpf/tools/tcx_attach.c are
-licensed under the GNU General Public License v2.0 only (SPDX-License-Identifier:
-GPL-2.0), as marked in each file. GPL licensing is required because the programs
-call GPL-only kernel BPF helpers. See https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+The files under bpf/src/ and bpf/tools/tcx_attach.c are licensed under the GNU
+General Public License v2.0 only (SPDX-License-Identifier: GPL-2.0), as marked in
+each file, because the programs call GPL-only kernel BPF helpers.
+See https://www.gnu.org/licenses/old-licenses/gpl-2.0.html

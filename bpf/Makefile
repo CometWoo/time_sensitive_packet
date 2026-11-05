@@ -1,19 +1,14 @@
-# Makefile — eBPF 프로그램 빌드 / 단위 테스트 / tcx 로더
+# make            build/*.bpf.o
+# make tools      build/tcx_attach (libbpf >= 1.3)
+# make test       BPF_PROG_TEST_RUN 단위 테스트 (root, bpftool)
+# make test-tcx   tcx 체인 테스트 (root, kernel >= 6.6)
+# make check-env  빌드 환경 점검
 #
-# 의존성 (Ubuntu): clang llvm make libbpf-dev linux-libc-dev bpftool python3-pytest gcc pkg-config
+# ts_classifier   NIC egress 분류기: TS 패킷이면 skb->priority 6, 선택적으로 DSCP EF
+# prio_probe      skb->priority 히스토그램 (veth 뒤에서 0 이 되는지 확인)
+# tcx_dummy_ok    TC_ACT_OK 를 반환하는 tcx 프로그램, test-tcx 에서 Cilium 대신 쓴다
 #
-# 사용법:
-#   make                 BPF 오브젝트 3개 빌드 → build/*.bpf.o
-#   make tools           tcx 로더(build/tcx_attach) 빌드 (libbpf >= 1.3)
-#   make test            BPF_PROG_TEST_RUN 기반 단위 테스트 (root + bpftool 필요)
-#   make test-tcx        tcx 체인 순서 통합 테스트 (root, kernel >= 6.6)
-#   make check-env       빌드 환경 진단
-#   make clean
-#
-# 프로그램:
-#   ts_classifier   호스트 NIC egress 분류기 (TS → skb->priority, 옵션 DSCP)   ★ 메인
-#   prio_probe      skb->priority 히스토그램 (veth 통과 시 priority 리셋 증명용)
-#   tcx_dummy_ok    TC_ACT_OK 를 반환하는 tcx 프로그램 (Cilium 흉내, 테스트 전용)
+# 필요 패키지(Ubuntu): clang llvm make gcc pkg-config libbpf-dev linux-libc-dev bpftool python3-pytest
 
 CLANG    ?= clang
 BPFTOOL  ?= bpftool
@@ -24,7 +19,6 @@ ARCH      := $(shell uname -m 2>/dev/null | sed -e 's/x86_64/x86/' -e 's/aarch64
 MULTIARCH ?= $(shell uname -m)-linux-gnu
 EXTRA_CFLAGS ?=
 
-# 실제 커널 UAPI(linux-libc-dev) + libbpf(libbpf-dev) 헤더 사용. stub 헤더 없음.
 BPF_CFLAGS := -g -O2 -target bpf \
     -D__TARGET_ARCH_$(ARCH) \
     -D__LITTLE_ENDIAN_BITFIELD \
@@ -44,7 +38,7 @@ LIBBPF_FLAGS := $(shell pkg-config --cflags --libs libbpf 2>/dev/null || echo -l
 .PHONY: all tools test test-tcx verify check-env check-env-quiet clean help
 
 all: check-env-quiet $(OBJS)
-	@echo "빌드 완료:" && ls -la $(OBJS)
+	@ls -la $(OBJS)
 
 tools: $(TOOLS)
 
@@ -59,7 +53,6 @@ $(BUILDDIR)/tcx_attach: tools/tcx_attach.c | $(BUILDDIR)
 	@echo "[CC ] $< -> $@"
 	$(CC) -O2 -Wall -o $@ $< $(LIBBPF_FLAGS)
 
-# ── 테스트 ────────────────────────────────────────────────────────────────
 test: all
 	@[ "$$(id -u)" = 0 ] || { echo "make test 는 root 로 실행하세요 (bpf() syscall): sudo make test"; exit 1; }
 	$(PYTHON) -m pytest -q tests
@@ -67,7 +60,6 @@ test: all
 test-tcx: all tools
 	@bash tests/test_tcx_chain.sh
 
-# ── 진단 ──────────────────────────────────────────────────────────────────
 verify: $(OBJS)
 	@for obj in $(OBJS); do \
 	    echo "== $$obj"; \
@@ -81,7 +73,7 @@ check-env:
 	@echo "== bpftool"; ($(BPFTOOL) version | head -1) || echo "  [WARN] bpftool 없음 (테스트/디버그에 필요)"
 	@echo "== libbpf";  (pkg-config --modversion libbpf) || echo "  [WARN] libbpf pkg-config 없음 (tools 빌드에 필요)"
 	@echo "== kernel";  uname -r
-	@echo "== tcx";     [ "$$(printf '%s\n' 6.6 $$(uname -r | cut -d. -f1-2) | sort -V | head -1)" = 6.6 ] && echo "  [OK] kernel >= 6.6 (tcx 사용 가능)" || echo "  [INFO] kernel < 6.6 — legacy clsact 만 사용 가능"
+	@echo "== tcx";     [ "$$(printf '%s\n' 6.6 $$(uname -r | cut -d. -f1-2) | sort -V | head -1)" = 6.6 ] && echo "  [OK] kernel >= 6.6 (tcx 사용 가능)" || echo "  [INFO] kernel < 6.6: legacy clsact 만 사용 가능"
 
 check-env-quiet:
 	@command -v $(CLANG) >/dev/null 2>&1 || { echo "[ERROR] clang 없음: apt install clang llvm"; exit 1; }
@@ -92,4 +84,4 @@ clean:
 	rm -rf $(BUILDDIR) tests/__pycache__ tests/.pytest_cache .pytest_cache
 
 help:
-	@sed -n '2,20p' Makefile
+	@sed -n '1,/^$$/p' Makefile
