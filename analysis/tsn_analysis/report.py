@@ -272,8 +272,13 @@ def render_markdown(summary: dict[str, Any]) -> str:
     for c in summary["cells"]:
         s = c["latency_ms"]
         rows.append(
-            [c["condition"], _factor_label(summary, c["factor"]), str(c["n_runs"]),
-             str(c["n_packets"])] + [_fmt(s[k]) for k in pct_cols]
+            [
+                c["condition"],
+                _factor_label(summary, c["factor"]),
+                str(c["n_runs"]),
+                str(c["n_packets"]),
+            ]
+            + [_fmt(s[k]) for k in pct_cols]
         )
     lines += _table(["condition", "factor", "runs", "n", *pct_cols], rows)
     lines.append("")
@@ -318,8 +323,20 @@ def render_markdown(summary: dict[str, Any]) -> str:
             ]
         )
     lines += _table(
-        ["condition", "factor", "expected", "received", "lost", "loss %", "dup", "reorder",
-         "throughput kbps", "gap p50 us", "gap p99 us", "DSCP"],
+        [
+            "condition",
+            "factor",
+            "expected",
+            "received",
+            "lost",
+            "loss %",
+            "dup",
+            "reorder",
+            "throughput kbps",
+            "gap p50 us",
+            "gap p99 us",
+            "DSCP",
+        ],
         rows,
     )
     lines.append("")
@@ -330,14 +347,21 @@ def render_markdown(summary: dict[str, Any]) -> str:
             continue
         for label, agg in c["per_run"].items():
             per_run_rows.append(
-                [c["condition"], _factor_label(summary, c["factor"]), label, str(agg["n_runs"]),
-                 _fmt(agg["mean"]), _fmt(agg["std"]),
-                 f"[{_fmt(agg['ci_low'])}, {_fmt(agg['ci_high'])}]"]
+                [
+                    c["condition"],
+                    _factor_label(summary, c["factor"]),
+                    label,
+                    str(agg["n_runs"]),
+                    _fmt(agg["mean"]),
+                    _fmt(agg["std"]),
+                    f"[{_fmt(agg['ci_low'])}, {_fmt(agg['ci_high'])}]",
+                ]
             )
     if per_run_rows:
         lines += ["## Per-run aggregate (mean of per-run statistic, t-interval when >= 3 runs)", ""]
-        lines += _table(["condition", "factor", "metric", "runs", "mean", "std", "CI"],
-                        per_run_rows)
+        lines += _table(
+            ["condition", "factor", "metric", "runs", "mean", "std", "CI"], per_run_rows
+        )
         lines.append("")
 
     lines += [f"## Comparisons vs `{summary['baseline']}`", ""]
@@ -371,8 +395,16 @@ def render_markdown(summary: dict[str, Any]) -> str:
             )
     if rows:
         lines += _table(
-            ["condition", "factor", "metric", "baseline [CI]", "condition [CI]",
-             "improvement", "p-value", "delta"],
+            [
+                "condition",
+                "factor",
+                "metric",
+                "baseline [CI]",
+                "condition [CI]",
+                "improvement",
+                "p-value",
+                "delta",
+            ],
             rows,
         )
     else:
@@ -422,7 +454,10 @@ def sanitize_json(obj: Any) -> Any:
 def to_json(summary: dict[str, Any], indent: int = 2) -> str:
     """Serialise a summary as strict JSON (``nan``/``inf`` become ``null``)."""
     return json.dumps(
-        sanitize_json(summary), indent=indent, default=_json_default, sort_keys=False,
+        sanitize_json(summary),
+        indent=indent,
+        default=_json_default,
+        sort_keys=False,
         allow_nan=False,
     )
 

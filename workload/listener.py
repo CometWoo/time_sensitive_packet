@@ -13,6 +13,7 @@
 사용법:
   python3 listener.py --port 6000 --interval 1 --output results.csv [--record-tos] [--ready-file F]
 """
+
 import argparse
 import csv
 import os
@@ -20,7 +21,7 @@ import socket
 import struct
 import time
 
-PKT_HEADER_FMT = "!IQ"          # [seq(u32)][send_time_ns(u64)] network byte order
+PKT_HEADER_FMT = "!IQ"  # [seq(u32)][send_time_ns(u64)] network byte order
 PKT_HEADER_SIZE = struct.calcsize(PKT_HEADER_FMT)
 
 
@@ -32,7 +33,7 @@ def set_cpu_affinity(cpu_id):
         print(f"CPU affinity 설정 실패: {e} (무시하고 계속)")
 
 
-SO_TIMESTAMPNS_NEW = getattr(socket, "SO_TIMESTAMPNS_NEW", 64)   # Linux, asm-generic/socket.h
+SO_TIMESTAMPNS_NEW = getattr(socket, "SO_TIMESTAMPNS_NEW", 64)  # Linux, asm-generic/socket.h
 SCM_TIMESTAMPNS_NEW = SO_TIMESTAMPNS_NEW
 
 
@@ -48,7 +49,7 @@ def recv_one(sock, record_tos, kernel_ts):
         if level == socket.IPPROTO_IP and ctype == socket.IP_TOS:
             tos = cdata[0]
         elif level == socket.SOL_SOCKET and ctype == SCM_TIMESTAMPNS_NEW and len(cdata) >= 16:
-            sec, nsec = struct.unpack("qq", cdata[:16])     # struct __kernel_timespec
+            sec, nsec = struct.unpack("qq", cdata[:16])  # struct __kernel_timespec
             kts = sec * 1_000_000_000 + nsec
     return data, tos, kts
 
@@ -56,19 +57,22 @@ def recv_one(sock, record_tos, kernel_ts):
 def main():
     parser = argparse.ArgumentParser(description="TSN Listener — UDP 수신 및 측정")
     parser.add_argument("--port", type=int, default=6000, help="수신 포트 (기본: 6000)")
-    parser.add_argument("--interval", type=float, default=1.0,
-                        help="예상 송신 간격 (ms, jitter 계산용)")
-    parser.add_argument("--timeout", type=float, default=30.0,
-                        help="마지막 패킷 후 이 시간(초) 동안 수신이 없으면 종료")
+    parser.add_argument("--interval", type=float, default=1.0, help="예상 송신 간격 (ms, jitter 계산용)")
+    parser.add_argument(
+        "--timeout", type=float, default=30.0, help="마지막 패킷 후 이 시간(초) 동안 수신이 없으면 종료"
+    )
     parser.add_argument("--output", default="results.csv", help="결과 CSV 경로")
     parser.add_argument("--cpu", type=int, default=-1, help="CPU affinity (기본: 미설정)")
-    parser.add_argument("--record-tos", action="store_true",
-                        help="IP_RECVTOS 로 수신 TOS(DSCP<<2|ECN) 를 tos 컬럼에 기록 (Linux)")
-    parser.add_argument("--ready-file", default="",
-                        help="bind 완료 후 이 파일을 생성 (오케스트레이션용)")
-    parser.add_argument("--kernel-ts", action="store_true",
-                        help="SO_TIMESTAMPNS_NEW 로 커널 RX 타임스탬프를 recv_kernel_ns 컬럼에 추가 기록 "
-                             "(latency_ms 는 그대로 사용자 공간 recv_ns 기준 — 기존 결과와 정의 동일)")
+    parser.add_argument(
+        "--record-tos", action="store_true", help="IP_RECVTOS 로 수신 TOS(DSCP<<2|ECN) 를 tos 컬럼에 기록 (Linux)"
+    )
+    parser.add_argument("--ready-file", default="", help="bind 완료 후 이 파일을 생성 (오케스트레이션용)")
+    parser.add_argument(
+        "--kernel-ts",
+        action="store_true",
+        help="SO_TIMESTAMPNS_NEW 로 커널 RX 타임스탬프를 recv_kernel_ns 컬럼에 추가 기록 "
+        "(latency_ms 는 그대로 사용자 공간 recv_ns 기준 — 기존 결과와 정의 동일)",
+    )
     parser.add_argument("--quiet", action="store_true", help="진행 로그 생략")
     args = parser.parse_args()
 
@@ -92,8 +96,10 @@ def main():
         with open(args.ready_file, "w") as f:
             f.write(str(os.getpid()))
 
-    print(f"Listener 시작: 0.0.0.0:{args.port}  (interval={args.interval}ms, timeout={args.timeout}s, "
-          f"record_tos={args.record_tos})")
+    print(
+        f"Listener 시작: 0.0.0.0:{args.port}  (interval={args.interval}ms, timeout={args.timeout}s, "
+        f"record_tos={args.record_tos})"
+    )
 
     results = []
     prev_recv_ns = None
@@ -145,8 +151,10 @@ def main():
             if not args.quiet and len(results) % 1000 == 0:
                 elapsed = (recv_ns - start_time) / 1e9
                 bw = total_bytes / elapsed if elapsed > 0 else 0
-                print(f"  수신: {len(results)} pkts, BW: {bw/1024:.1f} KB/s, "
-                      f"latency: {latency_ms:.3f}ms, jitter: {jitter_us:.1f}us")
+                print(
+                    f"  수신: {len(results)} pkts, BW: {bw / 1024:.1f} KB/s, "
+                    f"latency: {latency_ms:.3f}ms, jitter: {jitter_us:.1f}us"
+                )
     except KeyboardInterrupt:
         print("중단됨")
 
@@ -162,7 +170,7 @@ def main():
     # 손실은 고유 seq 기준으로: 중복은 손실을 가리지 않고, 재정렬은 '최대 seq 보다 작은 seq' 로 센다
     seqs = [r["seq"] for r in results]
     unique = len(set(seqs))
-    expected = max(seqs) - min(seqs) + 1
+    expected = max(seqs) + 1  # talker 는 seq 0 부터 보낸다: 첫 수신 전의 손실도 센다
     loss = expected - unique
     dups = len(seqs) - unique
     reorders = 0
@@ -174,9 +182,11 @@ def main():
             max_seen = s
 
     print("-" * 60)
-    print(f"총 수신: {len(results)} 패킷, 구간 {elapsed_s:.2f}s, "
-          f"BW {total_bytes / elapsed_s / 1024:.1f} KB/s, 손실 {loss}/{expected} ({loss / expected * 100:.2f}%), "
-          f"중복 {dups}, 재정렬 {reorders}")
+    print(
+        f"총 수신: {len(results)} 패킷, 구간 {elapsed_s:.2f}s, "
+        f"BW {total_bytes / elapsed_s / 1024:.1f} KB/s, 손실 {loss}/{expected} ({loss / expected * 100:.2f}%), "
+        f"중복 {dups}, 재정렬 {reorders}"
+    )
     print(f"Latency (ms): p50={latencies[n // 2]:.3f} p99={latencies[int(n * 0.99)]:.3f} max={latencies[-1]:.3f}")
     if jitters:
         m = len(jitters)

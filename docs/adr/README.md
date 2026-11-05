@@ -21,6 +21,6 @@
 | [0013](0013-configmap-scripts-via-kustomize.md) | ConfigMap 을 kustomize 가 .py 에서 생성 | 이미지 없는 VM, 인라인 사본 드리프트 |
 | [0014](0014-udp-port-classification-and-trust-boundary.md) | UDP 포트 분류 기준과 신뢰 경계 | Pod 는 VLAN/AVTP 를 만들 수 없다; dport 는 테넌트가 정한다 |
 | [0015](0015-statistics.md) | 선형 백분위 + 부트스트랩 CI + Mann-Whitney + Cliff's δ | 단일 run 점추정으로는 잡음과 신호를 못 가른다 |
-| [0016](0016-results-provenance.md) | 5월 K8s 결과는 "메커니즘 미작동 데이터" 로 재분류·보존 | 틀린 숫자를 찾아낸 과정이 포트폴리오의 핵심 |
+| [0016](0016-results-provenance.md) | 5월 K8s 결과는 철회, 원본은 히스토리에만 | 틀린 숫자를 찾아낸 과정은 기록으로 남기고, 무효인 원본은 트리에서 뺀다 |
 
 읽는 순서 추천: 0003 → 0005 → 0006 → 0010 → 0016 (핵심 서사), 나머지는 참고.

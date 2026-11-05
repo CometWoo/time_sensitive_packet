@@ -88,16 +88,41 @@ def test_plot_command(legacy_dir: Path, tmp_path: Path, capsys):
 
 def test_compare_command(legacy_dir: Path, capsys):
     rc = main(
-        ["compare", str(legacy_dir), "--baseline", "baseline", "--against", "proposed",
-         "--stat", "p99", "--normalize-skew", "--n-boot", "30"]
+        [
+            "compare",
+            str(legacy_dir),
+            "--baseline",
+            "baseline",
+            "--against",
+            "proposed",
+            "--stat",
+            "p99",
+            "--normalize-skew",
+            "--n-boot",
+            "30",
+        ]
     )
     assert rc == 0
     out = capsys.readouterr().out
     assert "CPU 10%" in out and "CPU 50%" in out and "CPU 99%" not in out
     assert "p-value" in out
     assert out.isascii()
-    rc = main(["compare", str(legacy_dir), "--baseline", "baseline", "--against", "proposed",
-               "--metric", "jitter", "--stat", "p50", "--n-boot", "10"])
+    rc = main(
+        [
+            "compare",
+            str(legacy_dir),
+            "--baseline",
+            "baseline",
+            "--against",
+            "proposed",
+            "--metric",
+            "jitter",
+            "--stat",
+            "p50",
+            "--n-boot",
+            "10",
+        ]
+    )
     assert rc == 0
     assert "(us)" in capsys.readouterr().out
 

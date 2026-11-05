@@ -20,8 +20,6 @@ from typing import Any
 
 import numpy as np
 
-from tsn_analysis.loader import Run
-
 LATENCY_PERCENTILES: tuple[float, ...] = (50.0, 90.0, 99.0, 99.9)
 
 
@@ -96,7 +94,8 @@ def jitter_summary(jitter_us: np.ndarray, method: str = "linear") -> dict[str, f
 def loss_summary(seq: np.ndarray) -> dict[str, float]:
     """Packet loss, duplicates and reorders derived from the sequence numbers.
 
-    * ``expected``   = ``max(seq) - min(seq) + 1`` (the sender's counter range);
+    * ``expected``   = ``max(seq) + 1`` (the talker numbers packets from 0, so packets
+      lost before the first arrival count too);
     * ``received``   = number of rows;
     * ``unique``     = number of distinct sequence numbers;
     * ``duplicates`` = ``received - unique``;
@@ -115,7 +114,8 @@ def loss_summary(seq: np.ndarray) -> dict[str, float]:
             "duplicates": 0.0,
             "reorders": 0.0,
         }
-    expected = int(arr.max() - arr.min() + 1)
+    # shortcut: tail loss is invisible here; use the talker's sent count if runs end under loss
+    expected = int(arr.max()) + 1
     unique = int(np.unique(arr).size)
     received = int(arr.size)
     lost = expected - unique
@@ -178,22 +178,4 @@ def dscp_distribution(tos: np.ndarray | None) -> dict[str, Any] | None:
         "tos": {int(k): int(v) for k, v in zip(tos_vals, tos_counts, strict=True)},
         "missing": int(arr.size - valid.size),
         "dominant_dscp": int(dscp_vals[np.argmax(dscp_counts)]) if valid.size else None,
-    }
-
-
-def run_metrics(run: Run, method: str = "linear") -> dict[str, Any]:
-    """All per-run metrics in one dict (latency, jitter, loss, throughput, ...)."""
-    return {
-        "name": run.name,
-        "condition": run.condition,
-        "run_index": run.run_index,
-        "factors": dict(run.factors),
-        "n": len(run),
-        "clock_skew_ms": run.clock_skew_ms,
-        "latency_ms": latency_summary(run.latency_ms, method),
-        "jitter_us": jitter_summary(run.jitter_us, method),
-        "loss": loss_summary(run.seq),
-        "throughput_kbps": throughput_kbps(run.pkt_size, run.recv_ns),
-        "inter_arrival_us": inter_arrival_summary(run.recv_ns, method),
-        "dscp": dscp_distribution(run.tos),
     }

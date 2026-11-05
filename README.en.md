@@ -14,15 +14,17 @@ reproduction could not have worked, then redesigning and verifying it.
    for every forwarded packet (`include/linux/netdevice.h`, v5.15 L4140 / v6.8 L4110; reached from
    `veth_xmit → veth_forward_skb → __dev_forward_skb`). Anything a Pod sets — `SO_PRIORITY` or a BPF
    program on the Pod's own `eth0` — reaches the host qdisc as 0. Measured with a priority histogram probe:
-   52,858 / 52,858 packets arrive at the host side with priority 0 although the sender set 6.
+   every packet past the veth (about 52,860 per run) has priority 0 although the sender set 6.
 2. On kernel ≥ 6.6, Cilium's tcx programs hide legacy `clsact` filters. `sch_handle_egress()` runs
    `tcx_run()` first and only falls through to `tc_run()` when the chain returns `TC_ACT_UNSPEC`. Cilium's
    `cil_to_netdev` returns `TC_ACT_OK`, so a `tc filter … bpf` classifier is never executed (CI integration
-   test: 0/21 hits; attached with `BPF_F_BEFORE` and returning `TCX_NEXT`: 20/22).
+   test: the legacy classifier behind an OK-returning tcx program never runs; attached with `BPF_F_BEFORE`
+   and returning `TCX_NEXT`, both run).
 3. The May 2026 cluster measurements (baseline vs proposed under CPU load) were taken with no competing
    network traffic, with the priority reset above in effect (custom priomap sent priority 0 to the *lowest*
    band), and with a talker that resolved DNS on every `sendto()` (effective 216–547 pkt/s instead of 1,000).
-   They are kept and re-interpreted, not presented as evidence ([docs/RESULTS.md](docs/RESULTS.md)).
+   They are withdrawn and the raw files were removed from the tree; why they were wrong stays in
+   [docs/RESULTS.md](docs/RESULTS.md) section 2.
 
 ## Redesign (v2)
 
@@ -35,7 +37,7 @@ reproduction could not have worked, then redesigning and verifying it.
   best-effort UDP flood (30 Mbit/s), five qdisc conditions, priority probes on both sides of the veth,
   classifier counters, receiver-side DSCP (`IP_RECVTOS`) and kernel RX timestamps.
 - `analysis/` — `tsn-analysis`: linear percentiles, bootstrap CIs, Mann-Whitney U, Cliff's δ, loss/dup/reorder,
-  throughput from timestamps, plots and Markdown/JSON reports (65 tests).
+  throughput from timestamps, plots and Markdown/JSON reports (79 tests, including one that pins the table below).
 - K8s orchestration (`scripts/experiment.sh`, kustomize manifests): HTB bottleneck class keyed on the listener
   IP, BE flood Job, condition names shared with the testbed, per-run metadata. Not yet executed on the
   cluster (no VM access at the time of writing).
@@ -44,20 +46,21 @@ reproduction could not have worked, then redesigning and verifying it.
 
 | condition | classifier | latency p50 / p99 (ms) | loss | received DSCP |
 |---|---|---|---|---|
-| `fifo` (pfifo) | no | 431.3 / 543.7 | 35.2 % | 0 |
+| `fifo` (pfifo) | no | 431.33 / 543.73 | 35.18 % | 0 |
 | `fq_codel` (Linux default) | no | 0.42 / 0.73 | 0 | 0 |
-| `pfifo_fast_noclsf` (priority 0) | no | 433.2 / 538.9 | 38.9 % | 0 |
+| `pfifo_fast_noclsf` (priority 0) | no | 433.15 / 538.89 | 38.96 % | 0 |
 | `pfifo_fast_clsf` | yes | 0.05 / 0.17 | 0 | 46 (EF) |
 | `prio_clsf` | yes | 0.05 / 0.18 | 0 | 46 (EF) |
 
-`pfifo_fast_noclsf` equals `fifo` (Cliff's δ = −0.22): a 3-band priority queue does nothing when the priority
-never arrives — the real state of the May design. With the classifier, p50 drops ~8,600× and loss goes to zero
-on the same qdisc; the DSCP mark arrives end-to-end with a valid checksum.
+`pfifo_fast_noclsf` stays in the same 430 ms band as `fifo` (the distributions differ only slightly, Cliff's δ = −0.22):
+a 3-band priority queue does nothing when the priority never arrives — the real state of the May design. With the
+classifier, p50 drops ~8,900× and loss goes to zero on the same qdisc (vs `fifo`: Mann-Whitney p < 1e-300,
+δ = +1.00); the DSCP mark arrives on 30,000 / 30,000 packets with a valid checksum.
 
 ## Verification
 
 26 `bpftool prog run` (BPF_PROG_TEST_RUN) unit tests (kernel 5.15 WSL2 and 6.17 CI), tcx chain integration test
-(CI), testbed runs in CI with artifacts committed under `results/testbed/`, 65 analysis tests, shellcheck/ruff/
+(CI), testbed runs in CI with artifacts committed under `results/testbed/`, 79 analysis tests, shellcheck/ruff/
 kubeconform. Matrix: [docs/VERIFICATION.md](docs/VERIFICATION.md). Limits: [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
 ## Why it matters for AI-datacenter networking

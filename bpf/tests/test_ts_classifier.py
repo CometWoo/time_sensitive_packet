@@ -2,6 +2,7 @@
 
 실행: sudo make -C bpf test   (root + bpftool + 빌드된 build/*.bpf.o 필요)
 """
+
 from __future__ import annotations
 
 import bpf_harness as h
@@ -119,8 +120,10 @@ def test_ipv4_options_ihl6_is_parsed(prog):
 
 
 def test_truncated_ipv4_header_is_safe(prog):
+    # kernel 7.0 test_run rejects an untagged IPv4 frame shorter than an IP header (EINVAL),
+    # so reach the short-header path through an 802.1Q tag; PCP 1 keeps it non-TS
     c0 = prog.counters()
-    r = prog.run(h.eth(0x0800, b"\x45\x00\x00\x1c\x00\x00"))   # 6 bytes of IP header only
+    r = prog.run(h.eth(0x8100, h.vlan(1, 100, 0x0800, b"\x45\x00\x00\x1c\x00\x00")))  # 6 bytes of IP header
     assert r.retval == h.TC_ACT_UNSPEC and r.priority == 0
     assert delta(prog, c0, prog.counters())["PARSE_SHORT"] == 1
 
@@ -134,14 +137,14 @@ def test_ipv4_first_fragment_is_normal(prog):
 
 def test_ipv4_later_fragment_with_port_like_bytes_is_normal(prog):
     """뒤 단편(offset>0)의 payload 첫 바이트가 우연히 포트 6000 처럼 보여도 분류하지 않는다."""
-    fake_udp_looking_payload = b"\x30\x39\x17\x70" + b"\x00" * 60   # sport 12345, dport 6000
+    fake_udp_looking_payload = b"\x30\x39\x17\x70" + b"\x00" * 60  # sport 12345, dport 6000
     frame = h.eth(0x0800, h.ipv4(17, fake_udp_looking_payload, frag_off=185))
     r = prog.run(frame, ctx_priority=0)
     assert r.priority == 0
 
 
 def test_truncated_udp_header_is_normal(prog):
-    ip = h.ipv4(17, b"\x30\x39\x17\x70")   # UDP header cut after dport
+    ip = h.ipv4(17, b"\x30\x39\x17\x70")  # UDP header cut after dport
     r = prog.run(h.eth(0x0800, ip))
     assert r.priority == 0
 
@@ -172,7 +175,7 @@ def test_dscp_not_marked_without_flag(prog):
 
 
 def test_dscp_ef_marking_updates_checksum(prog):
-    prog.set_config(flags=h.TS_CFG_MARK_DSCP)          # dscp=0 → 기본 EF(46)
+    prog.set_config(flags=h.TS_CFG_MARK_DSCP)  # dscp=0 → 기본 EF(46)
     c0 = prog.counters()
     orig = h.udp_frame(h.TS_DEFAULT_UDP_PORT, tos=0)
     r = prog.run(orig)
@@ -188,7 +191,7 @@ def test_dscp_ef_marking_updates_checksum(prog):
 
 
 def test_dscp_marking_preserves_ecn_bits(prog):
-    prog.set_config(dscp=34, flags=h.TS_CFG_MARK_DSCP)   # AF41 = 34
+    prog.set_config(dscp=34, flags=h.TS_CFG_MARK_DSCP)  # AF41 = 34
     r = prog.run(h.udp_frame(h.TS_DEFAULT_UDP_PORT, tos=(10 << 2) | 0b10))
     tos, csum_ok = h.parse_ipv4_tos_and_csum_ok(r.data_out)
     assert tos == (34 << 2) | 0b10 and csum_ok

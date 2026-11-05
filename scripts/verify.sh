@@ -16,8 +16,7 @@
 #
 #   --condition  기대 상태를 고정한다: *_clsf 면 분류기가 붙어 있어야, 아니면 없어야 하고 leaf 가 맞아야 한다.
 #                생략하면 현재 상태를 보고만 한다 (모순 — pin 은 있는데 체인 맨 앞이 아님 — 만 실패).
-#   --offline    live 검사를 건너뛴다. DIR 을 주지 않으면 results/k8s-2026-05 (2026-05, v1, meta 없음)
-#                와 results/ (testbed, k8s) 아래를 재귀로 찾는다.
+#   --offline    live 검사를 건너뛴다. DIR 을 주지 않으면 results/ (testbed, k8s) 아래를 재귀로 찾는다.
 #   --quick      results 검사만 (live 는 [1]~[2] 만)
 #
 # 종료 코드: FAIL 이 하나라도 있으면 1. sudo 를 스스로 호출하지 않는다 (live 검사는 root 로 실행).
@@ -301,7 +300,7 @@ results_checks() {
     local -a dirs=("${RESULT_DIRS[@]}")
     if [ "${#dirs[@]}" -eq 0 ]; then
         if [ "$OFFLINE" = 1 ]; then
-            dirs=("$ROOT_DIR/results/k8s-2026-05" "$ROOT_DIR/results")
+            dirs=("$ROOT_DIR/results")
         else
             dirs=("$RESULTS_DIR")
         fi
@@ -346,7 +345,6 @@ for path in files:
             meta = json.load(open(meta_path, encoding="utf-8"))
         except (OSError, ValueError) as e:
             fail(f"{rel}: meta.json 파싱 실패: {e}")
-    legacy_v1 = "results/k8s-2026-05/" in path.replace("\\", "/")   # 2026-05 v1 데이터 (meta 이전)
     with open(path, newline="", encoding="utf-8") as f:
         rdr = csv.reader(f)
         try:
@@ -382,13 +380,9 @@ for path in files:
     if n < expect_count:
         (warn if n >= 0.5 * expect_count else fail)(f"{rel}: 수신 {n} < 송신 {expect_count} (손실 {expect_count - n}; fifo/pfifo_fast 병목에서 tail-drop 은 정상)")
     if gaps and abs(med_ms - expect_int) > 0.10 * expect_int:
-        msg = f"{rel}: 송신 간격 중앙값 {med_ms:.3f} ms, 기대 {expect_int} ms ±10 %"
-        if meta:
-            fail(msg + " — talker 페이싱 실패 (CFS throttling / CPU 기아?)")
-        else:
-            warn(msg + " (v1 데이터: per-packet DNS 해석으로 알려진 페이싱 결함, README 참고)")
+        fail(f"{rel}: 송신 간격 중앙값 {med_ms:.3f} ms, 기대 {expect_int} ms ±10 % — talker 페이싱 실패 (CFS throttling / CPU 기아?)")
     if meta is None:
-        (warn if legacy_v1 else fail)(f"{rel}: {os.path.basename(meta_path)} 없음" + (" (2026-05 v1 데이터, meta 이전)" if legacy_v1 else ""))
+        fail(f"{rel}: {os.path.basename(meta_path)} 없음")
         continue
     # ── meta 기반 검사 ──
     # k8s meta 는 "classifier": bool 을 쓰고, testbed(run.sh) meta 는 조건 이름(*_clsf) 으로만 안다

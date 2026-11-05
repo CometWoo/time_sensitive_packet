@@ -1,6 +1,6 @@
 # TSN measurement summary
 
-- results dir: `results\testbed\ci-34294518788\ci`
+- results dir: `results/testbed/ci-34294518788/ci`
 - baseline condition: `fifo`
 - conditions: fifo, fq_codel, pfifo_fast_clsf, pfifo_fast_noclsf, prio_clsf
 - percentile method: numpy `linear`
@@ -33,10 +33,10 @@ throughput kbps = 8 * received bytes / (last recv - first recv) in kbit/s, i.e. 
 
 | condition | factor | expected | received | lost | loss % | dup | reorder | throughput kbps | gap p50 us | gap p99 us | DSCP |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| fifo | all runs | 29995 | 19444 | 10551 | 35.18 | 0 | 0 | 674.24 | 1228.57 | 4123.09 | 0 |
+| fifo | all runs | 29999 | 19444 | 10555 | 35.18 | 0 | 0 | 674.24 | 1228.57 | 4123.09 | 0 |
 | fq_codel | all runs | 30000 | 30000 | 0 | 0.00 | 0 | 0 | 1024.07 | 1203.73 | 1269.42 | 0 |
 | pfifo_fast_clsf | all runs | 30000 | 30000 | 0 | 0.00 | 0 | 0 | 1024.11 | 999.94 | 1126.54 | 46 |
-| pfifo_fast_noclsf | all runs | 29991 | 18311 | 11680 | 38.95 | 0 | 0 | 633.80 | 1785.37 | 2958.54 | 0 |
+| pfifo_fast_noclsf | all runs | 29999 | 18311 | 11688 | 38.96 | 0 | 0 | 633.80 | 1785.37 | 2958.54 | 0 |
 | prio_clsf | all runs | 30000 | 30000 | 0 | 0.00 | 0 | 0 | 1024.11 | 999.87 | 1134.80 | 46 |
 
 ## Per-run aggregate (mean of per-run statistic, t-interval when >= 3 runs)

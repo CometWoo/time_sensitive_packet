@@ -47,8 +47,16 @@ KNOWN_COLORS: dict[str, str] = {
     "prio_class": "#E8734A",
 }
 FALLBACK_COLORS: tuple[str, ...] = (
-    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
-    "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
+    "#1f77b4",
+    "#ff7f0e",
+    "#2ca02c",
+    "#d62728",
+    "#9467bd",
+    "#8c564b",
+    "#e377c2",
+    "#7f7f7f",
+    "#bcbd22",
+    "#17becf",
 )
 PCT_HATCH: dict[str, str] = {"p50": "", "p99": "//", "max": "xx"}
 PCT_ALPHA: dict[str, float] = {"p50": 0.9, "p99": 0.7, "max": 0.5}
@@ -117,17 +125,26 @@ def _grouped_percentile_bars(
                     v = _stat(getattr(cell, attr), st) if cell else float("nan")
                     heights.append(_positive_or_nan(v) if log_y else v)
                 bars = ax.bar(
-                    x_base + offset, heights, width=width, color=colors[cond],
-                    alpha=PCT_ALPHA.get(st, 0.8), hatch=PCT_HATCH.get(st, ""),
-                    edgecolor="black", linewidth=0.5, label=f"{cond} {st}",
+                    x_base + offset,
+                    heights,
+                    width=width,
+                    color=colors[cond],
+                    alpha=PCT_ALPHA.get(st, 0.8),
+                    hatch=PCT_HATCH.get(st, ""),
+                    edgecolor="black",
+                    linewidth=0.5,
+                    label=f"{cond} {st}",
                 )
                 for bar, val in zip(bars, heights, strict=True):
                     if not np.isnan(val):
                         ymax = max(ymax, val)
                         ax.text(
-                            bar.get_x() + bar.get_width() / 2, val,
+                            bar.get_x() + bar.get_width() / 2,
+                            val,
                             f"{val:.1f}" if val < 100 else f"{val:.0f}",
-                            ha="center", va="bottom", fontsize=6.5,
+                            ha="center",
+                            va="bottom",
+                            fontsize=6.5,
                             rotation=90 if n_cond * n_stat > 4 else 0,
                         )
         ax.set_xticks(x_base)
@@ -141,8 +158,12 @@ def _grouped_percentile_bars(
             ax.set_ylim(top=ymax * 1.15)
         ax.set_title(title)
         # Legend below the axes so it never hides a bar.
-        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.12),
-                  ncol=max(1, n_cond * n_stat), framealpha=0.9)
+        ax.legend(
+            loc="upper center",
+            bbox_to_anchor=(0.5, -0.12),
+            ncol=max(1, n_cond * n_stat),
+            framealpha=0.9,
+        )
         ax.grid(True, axis="y", which="both", alpha=0.3)
         fig.tight_layout()
         fig.savefig(out, bbox_inches="tight")
@@ -152,7 +173,10 @@ def _grouped_percentile_bars(
 
 def plot_latency_percentiles(ds: Dataset, out_dir: Path) -> Path:
     return _grouped_percentile_bars(
-        ds, "latency_ms", ("p50", "p99", "max"), "Latency (ms)",
+        ds,
+        "latency_ms",
+        ("p50", "p99", "max"),
+        "Latency (ms)",
         "Latency p50 / p99 / max per condition (lower is better)",
         out_dir / "fig_latency_percentiles.png",
     )
@@ -160,7 +184,10 @@ def plot_latency_percentiles(ds: Dataset, out_dir: Path) -> Path:
 
 def plot_jitter_percentiles(ds: Dataset, out_dir: Path) -> Path:
     return _grouped_percentile_bars(
-        ds, "jitter_us", ("p50", "p99", "max"), "|Jitter| (us)",
+        ds,
+        "jitter_us",
+        ("p50", "p99", "max"),
+        "|Jitter| (us)",
         "Jitter p50 / p99 / max per condition (lower is better)",
         out_dir / "fig_jitter_percentiles.png",
     )
@@ -228,14 +255,25 @@ def plot_throughput(ds: Dataset, out_dir: Path) -> Path:
                 heights.append(float(np.nanmean(per_run)))
             offset = ci * width - 0.4 + width / 2
             bars = ax.bar(
-                x_base + offset, heights, width=width, color=colors[cond],
-                edgecolor="black", linewidth=0.6, label=cond,
+                x_base + offset,
+                heights,
+                width=width,
+                color=colors[cond],
+                edgecolor="black",
+                linewidth=0.6,
+                label=cond,
             )
             for bar, val in zip(bars, heights, strict=True):
                 if not np.isnan(val):
                     ymax = max(ymax, val)
-                    ax.text(bar.get_x() + bar.get_width() / 2, val, f"{val:.1f}",
-                            ha="center", va="bottom", fontsize=7)
+                    ax.text(
+                        bar.get_x() + bar.get_width() / 2,
+                        val,
+                        f"{val:.1f}",
+                        ha="center",
+                        va="bottom",
+                        fontsize=7,
+                    )
         ax.set_xticks(x_base)
         ax.set_xticklabels([ds.factor_label(k) for k in ds.factor_keys])
         ax.set_ylabel("Received throughput (kbit/s)")
@@ -273,7 +311,10 @@ def plot_latency_box(ds: Dataset, out_dir: Path) -> Path:
             # ``tick_labels=`` only exists from matplotlib 3.9 (``labels=`` before);
             # setting the ticks explicitly works on every supported version.
             bp = ax.boxplot(
-                data, patch_artist=True, whis=(1, 99), showfliers=True,
+                data,
+                patch_artist=True,
+                whis=(1, 99),
+                showfliers=True,
                 flierprops={"marker": ".", "markersize": 2, "alpha": 0.4},
                 medianprops={"color": "black"},
             )
