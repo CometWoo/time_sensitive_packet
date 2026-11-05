@@ -68,7 +68,7 @@ jobs:
             bpf/build/tcx_attach
 
   analysis:
-    name: analysis package tests + report on committed results
+    name: analysis package tests (incl. the committed CI run)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -79,14 +79,3 @@ jobs:
         run: python -m pip install -q -e "./analysis[dev]"
       - name: pytest
         run: cd analysis && python -m pytest -q
-      - name: regenerate report + figures for the K8s results (May 2026)
-        run: |
-          mkdir -p out/k8s-may2026
-          tsn-analysis summary results/k8s-2026-05 --normalize-skew --baseline baseline \
-            --markdown out/k8s-may2026/summary.md --json out/k8s-may2026/summary.json
-          tsn-analysis plot results/k8s-2026-05 --normalize-skew --out out/k8s-may2026
-          cat out/k8s-may2026/summary.md >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: analysis-report
-          path: out/

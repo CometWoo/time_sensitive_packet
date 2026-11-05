@@ -1,14 +1,13 @@
 # tsn-analysis
 
 Analysis package for the measurement CSVs of the eBPF time-sensitive networking
-testbed. It replaces the two ad-hoc 2026-05 scripts (`compare_results.py`, `plot-results.py`, removed in v0.3)
-(both are now thin wrappers around this package).
+testbed. It replaced the two ad-hoc 2026-05 scripts (`compare_results.py`, `plot-results.py`) in v0.3.
 
 ```
 pip install -e analysis[dev]          # or just run with analysis/ on sys.path
-tsn-analysis summary results/k8s-2026-05 --normalize-skew --json out.json
-tsn-analysis plot    results/k8s-2026-05 --normalize-skew --out figures
-tsn-analysis compare results/k8s-2026-05 --baseline baseline --against proposed --stat p99
+tsn-analysis summary results/testbed/ci-34294518788/ci --baseline fifo --json out.json
+tsn-analysis plot    results/testbed/ci-34294518788/ci --out figures
+tsn-analysis compare results/testbed/ci-34294518788/ci --baseline fifo --against pfifo_fast_clsf --stat p99
 cd analysis && python -m pytest -q && ruff check .
 ```
 
@@ -23,8 +22,8 @@ File stems are parsed as `<mode>_cpu<N>` (condition + factor `cpu=N`), `<cond>_r
 
 * Percentiles: `numpy.percentile(method="linear")` (Hyndman-Fan type 7); the legacy
   `sorted(x)[int(n*0.99)]` nearest-rank variant is available via `method=`.
-* `--normalize-skew` subtracts each run's 1st-percentile latency. Only for the old two-VM
-  testbed whose clocks were offset (raw latency was negative); it destroys absolute latency
+* `--normalize-skew` subtracts each run's 1st-percentile latency. Only for two-host runs whose
+  clocks are offset (the K8s cluster setup; raw latency can go negative); it destroys absolute latency
   and must not be used when both timestamps come from the same clock. Because every run is
   shifted by its *own* p1, cross-condition comparisons are of the distribution above each
   run's floor: a constant location difference between conditions is removed by construction.
@@ -35,10 +34,8 @@ File stems are parsed as `<mode>_cpu<N>` (condition + factor `cpu=N`), `<cond>_r
 * Significance: two-sided Mann-Whitney U (rank based; latency tails are heavy, so a t-test
   on means is not appropriate). Effect size: Cliff's delta.
 * Throughput: `8 * total_bytes / (last_recv - first_recv)` in kbit/s - the rate actually
-  delivered over the receive span, not `(n-1) * send_interval`. On the 2026-05 K8s data this
-  exposes that the talker never reached 1 ms pacing (median receive gap 1.3-1.8 ms, receive
-  spans 20-45 s for 10 000 packets), so throughput differs per run (264-561 kbit/s) and
-  says nothing about the qdisc; read it together with `gap p50`.
+  delivered over the receive span, not `(n-1) * send_interval`. A talker that misses its pacing
+  shows up as lower throughput and a larger `gap p50`, not as loss; read the two together.
 * Loss from sequence gaps (`expected = max(seq) + 1`: the talker counts from 0, so loss before
   the first arrival is counted), duplicates and reorders reported separately.
 

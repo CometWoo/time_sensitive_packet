@@ -1,6 +1,6 @@
 line-length = 120
 target-version = "py311"
-extend-exclude = ["results/k8s-2026-05/figures", "notes"]
+extend-exclude = ["notes"]
 
 [lint]
 select = ["E", "F", "W", "I", "B", "UP"]
