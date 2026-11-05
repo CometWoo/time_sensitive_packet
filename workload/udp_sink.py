@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""udp_sink.py — best-effort 트래픽을 받아서 버리는 싱크 (ICMP unreachable 방지용)
+"""best-effort flood 를 받아 버리는 싱크. 받은 패킷 수만 센다.
 
-싱크가 없으면 수신 측 커널이 UDP 포트 unreachable ICMP 를 매 패킷마다 되돌려
-역방향 트래픽/CPU 를 만든다. 받은 패킷 수만 센다.
+싱크가 없으면 수신 커널이 패킷마다 ICMP port unreachable 을 돌려보내 역방향 트래픽이 생긴다.
 """
 
 import argparse

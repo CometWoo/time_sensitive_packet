@@ -1,7 +1,7 @@
 name: testbed
 
-# netns 테스트베드 실험을 CI 러너(ubuntu-24.04, kernel 6.x, sch_tbf/sch_prio 있음)에서 실행하고
-# CSV/메타/그래프/리포트를 아티팩트로 남긴다. 결과는 repo 의 results/testbed/ 에 수동 커밋한다.
+# GitHub 러너에서 netns 테스트베드를 돌리고 CSV, 메타데이터, 리포트를 아티팩트로 남긴다.
+# results/testbed/ 는 이 아티팩트에서 listener CSV 와 meta.json 만 옮겨 커밋한 것이다.
 on:
   workflow_dispatch:
     inputs:
@@ -61,7 +61,7 @@ jobs:
             --markdown testbed/runs/ci/report.md --json testbed/runs/ci/summary.json
           tsn-analysis plot testbed/runs/ci --out testbed/runs/ci/figures
           {
-            echo "## netns testbed — kernel $(uname -r)"
+            echo "## netns testbed, kernel $(uname -r)"
             cat testbed/runs/ci/report.md
             echo
             echo '### priority histogram / classifier counters (run 1)'

@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
-"""listener.py — UDP 패킷 수신 및 latency / jitter / DSCP 측정
+"""talker 패킷을 받아 latency, jitter, 수신 TOS 를 CSV 로 남긴다.
 
-측정 지표 (논문 §V 와 동일한 정의):
-  - Bandwidth : 수신 바이트 / 수신 구간(초)
-  - Latency   : recv_ns - send_ns  (송신 타임스탬프는 패킷 헤더에 실려 옴)
-                ※ 서로 다른 호스트라면 두 시계의 오프셋이 포함된다 (PTP/NTP 필요).
-                   같은 호스트(netns 테스트베드)에서는 같은 시계라 절대값이 유효하다.
-  - Jitter    : Jitter(i) = t_i - (t_{i-1} + T),  T = 송신 간격
-  - TOS/DSCP  : --record-tos 일 때 IP_RECVTOS 로 수신 IP TOS 바이트 기록
-                (eBPF DSCP 마킹이 실제로 와이어에 실렸는지 end-to-end 검증)
+latency = recv_ns - send_ns. 다른 호스트끼리면 두 시계의 오프셋이 섞인다. netns 테스트베드는
+          한 호스트라 같은 시계를 쓰므로 절대값 그대로 쓸 수 있다.
+jitter  = t_i - (t_{i-1} + T), T 는 송신 간격
+tos     = --record-tos 일 때 IP_RECVTOS 로 받은 TOS 바이트. DSCP 마킹이 실제로 도착했는지 본다.
 
-사용법:
-  python3 listener.py --port 6000 --interval 1 --output results.csv [--record-tos] [--ready-file F]
+python3 listener.py --port 6000 --interval 1 --output results.csv [--record-tos] [--ready-file F]
 """
 
 import argparse
@@ -23,14 +18,6 @@ import time
 
 PKT_HEADER_FMT = "!IQ"  # [seq(u32)][send_time_ns(u64)] network byte order
 PKT_HEADER_SIZE = struct.calcsize(PKT_HEADER_FMT)
-
-
-def set_cpu_affinity(cpu_id):
-    try:
-        os.sched_setaffinity(0, {cpu_id})
-        print(f"CPU affinity: CPU {cpu_id}")
-    except Exception as e:  # noqa: BLE001 — 격리 코어가 없는 환경에서도 계속 진행
-        print(f"CPU affinity 설정 실패: {e} (무시하고 계속)")
 
 
 SO_TIMESTAMPNS_NEW = getattr(socket, "SO_TIMESTAMPNS_NEW", 64)  # Linux, asm-generic/socket.h
@@ -55,14 +42,13 @@ def recv_one(sock, record_tos, kernel_ts):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="TSN Listener — UDP 수신 및 측정")
+    parser = argparse.ArgumentParser(description="TS 흐름 수신기")
     parser.add_argument("--port", type=int, default=6000, help="수신 포트 (기본: 6000)")
     parser.add_argument("--interval", type=float, default=1.0, help="예상 송신 간격 (ms, jitter 계산용)")
     parser.add_argument(
         "--timeout", type=float, default=30.0, help="마지막 패킷 후 이 시간(초) 동안 수신이 없으면 종료"
     )
     parser.add_argument("--output", default="results.csv", help="결과 CSV 경로")
-    parser.add_argument("--cpu", type=int, default=-1, help="CPU affinity (기본: 미설정)")
     parser.add_argument(
         "--record-tos", action="store_true", help="IP_RECVTOS 로 수신 TOS(DSCP<<2|ECN) 를 tos 컬럼에 기록 (Linux)"
     )
@@ -70,16 +56,12 @@ def main():
     parser.add_argument(
         "--kernel-ts",
         action="store_true",
-        help="SO_TIMESTAMPNS_NEW 로 커널 RX 타임스탬프를 recv_kernel_ns 컬럼에 추가 기록 "
-        "(latency_ms 는 그대로 사용자 공간 recv_ns 기준 — 기존 결과와 정의 동일)",
+        help="커널 RX 타임스탬프를 recv_kernel_ns 컬럼에 추가 (latency_ms 는 사용자 공간 recv_ns 기준 그대로)",
     )
     parser.add_argument("--quiet", action="store_true", help="진행 로그 생략")
     args = parser.parse_args()
 
     expected_interval_ns = int(args.interval * 1e6)
-
-    if args.cpu >= 0:
-        set_cpu_affinity(args.cpu)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     # SO_REUSEADDR 은 쓰지 않는다: 이전 listener 가 살아 있으면 조용히 포트를 나눠 갖는 대신 bind 가 실패해야 한다
@@ -112,7 +94,7 @@ def main():
                 data, tos, kernel_ns = recv_one(sock, args.record_tos, args.kernel_ts)
             except TimeoutError:
                 if results:
-                    print(f"타임아웃 — 수신 완료 ({len(results)} 패킷)")
+                    print(f"타임아웃, 수신 종료 ({len(results)} 패킷)")
                     break
                 if not args.quiet:
                     print("대기 중... (패킷 미수신)")

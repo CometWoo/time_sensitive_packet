@@ -1,19 +1,11 @@
-"""bpf_harness.py — bpftool 기반 BPF_PROG_TEST_RUN 단위 테스트 하네스
+"""bpftool prog run(BPF_PROG_TEST_RUN)으로 tc 프로그램을 돌리는 테스트 하네스.
 
-커널 기능 BPF_PROG_TEST_RUN(bpf(2) BPF_PROG_RUN) 을 이용해 실제 NIC/트래픽 없이
-SCHED_CLS(tc) 프로그램을 실행한다:
-  - data_in  : 우리가 만든 이더넷 프레임 → 커널이 진짜 skb 로 감싸 프로그램에 넘김
-  - ctx_in   : struct __sk_buff 초기값 (priority 등 일부 필드만 설정 가능)
-  - data_out : 프로그램이 수정한 뒤의 패킷 (DSCP/체크섬 검증)
-  - ctx_out  : 프로그램이 수정한 뒤의 __sk_buff (skb->priority 검증)
-  - map      : bpftool map dump/update 로 카운터·설정 조작
+직접 만든 이더넷 프레임을 data_in, struct __sk_buff 초기값을 ctx_in 으로 넘기고 수정된
+패킷(data_out)과 skb(ctx_out)를 돌려받는다. map 은 bpftool map dump/update 로 다룬다.
+C 로더나 bcc 없이 CI 러너에서 그대로 돈다.
 
-왜 bpftool CLI 인가: 별도 C 로더나 python 바인딩(bcc) 없이 표준 도구만으로
-재현 가능하고, CI(ubuntu-24.04 러너)에서도 그대로 돈다.
-
-제약: test_run 은 ctx_in 의 vlan_present/vlan_tci 설정을 허용하지 않으므로
-(net/bpf/test_run.c convert___skb_to_skb) HW-accel VLAN 메타데이터 경로는
-여기서 검증하지 못한다 — 인라인 802.1Q 태그로만 검증한다.
+test_run 은 ctx_in 의 vlan_present/vlan_tci 를 받지 않는다(net/bpf/test_run.c). 그래서
+드라이버가 떼어 낸 VLAN 태그 경로는 확인하지 못하고 패킷 안 802.1Q 태그로만 확인한다.
 """
 
 from __future__ import annotations
@@ -31,7 +23,7 @@ HERE = Path(__file__).resolve().parent
 BUILD_DIR = Path(os.environ.get("TSN_BPF_BUILD", HERE.parent / "build"))
 BPFTOOL = os.environ.get("BPFTOOL", shutil.which("bpftool") or "bpftool")
 
-# ── ts_common.h 와 동일해야 하는 상수 ─────────────────────────────────────
+# ts_common.h 와 같아야 한다
 TS_DEFAULT_UDP_PORT = 6000
 TS_DEFAULT_PRIORITY = 6
 TS_DEFAULT_DSCP = 46
@@ -49,7 +41,7 @@ SKB_PRIORITY_OFF = 32
 SKB_CTX_SIZE = 192  # v6.x 크기. 5.15(184) 에서는 꼬리가 0 이면 허용됨.
 
 
-# ── 패킷 빌더 ───────────────────────────────────────────────────────────────
+# 패킷 빌더
 DST_MAC = bytes.fromhex("aabbccddeeff")
 SRC_MAC = bytes.fromhex("112233445566")
 
@@ -136,7 +128,7 @@ def parse_ipv4_tos_and_csum_ok(frame: bytes, ip_off: int = 14) -> tuple[int, boo
     return hdr[1], ip_checksum(hdr) == 0
 
 
-# ── bpftool 래퍼 ────────────────────────────────────────────────────────────
+# bpftool 래퍼
 def _run(args: list[str], check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(args, capture_output=True, text=True, check=check)
 
@@ -169,7 +161,7 @@ class LoadedProg:
     def __init__(self, obj_name: str, pin_name: str | None = None):
         self.obj = BUILD_DIR / f"{obj_name}.bpf.o"
         if not self.obj.exists():
-            raise FileNotFoundError(f"{self.obj} 없음 — make -C bpf 먼저")
+            raise FileNotFoundError(f"{self.obj} 없음: make -C bpf 먼저")
         self.pin = f"/sys/fs/bpf/tsn_test_{pin_name or obj_name}_{os.getpid()}"
         self.tmp = Path(tempfile.mkdtemp(prefix="tsn-bpf-"))
         if os.path.exists(self.pin):
@@ -204,7 +196,7 @@ class LoadedProg:
     def percpu_sum(self, name: str) -> dict[int, int]:
         """PERCPU/일반 ARRAY map 을 {key: 전체 CPU 합} 으로.
 
-        BTF 가 있으면 'formatted' 에 해석된 값이 오고, 없으면 raw 바이트 배열만 온다 —
+        BTF 가 있으면 'formatted' 에 해석된 값이 오고, 없으면 raw 바이트 배열만 온다.
         둘 다 처리한다.
         """
         out: dict[int, int] = {}
@@ -282,6 +274,6 @@ class LoadedProg:
         if rv is None:
             rv = j.get("retval")
         rv = int(rv)
-        if rv >= 1 << 31:  # bpftool 은 u32 로 출력 → TC_ACT_UNSPEC(-1) 은 4294967295
+        if rv >= 1 << 31:  # bpftool 은 u32 로 찍는다: TC_ACT_UNSPEC(-1) 이 4294967295
             rv -= 1 << 32
         return RunResult(rv, dout.read_bytes(), cout.read_bytes())
