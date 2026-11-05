@@ -120,8 +120,10 @@ def test_ipv4_options_ihl6_is_parsed(prog):
 
 
 def test_truncated_ipv4_header_is_safe(prog):
+    # kernel 7.0 test_run rejects an untagged IPv4 frame shorter than an IP header (EINVAL),
+    # so reach the short-header path through an 802.1Q tag; PCP 1 keeps it non-TS
     c0 = prog.counters()
-    r = prog.run(h.eth(0x0800, b"\x45\x00\x00\x1c\x00\x00"))  # 6 bytes of IP header only
+    r = prog.run(h.eth(0x8100, h.vlan(1, 100, 0x0800, b"\x45\x00\x00\x1c\x00\x00")))  # 6 bytes of IP header
     assert r.retval == h.TC_ACT_UNSPEC and r.priority == 0
     assert delta(prog, c0, prog.counters())["PARSE_SHORT"] == 1
 
