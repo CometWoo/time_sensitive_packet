@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.4 — 2026-11 정리 (수치 재검증, 무효 데이터 철회, 군살 제거)
+
+수정
+- 손실 계산: `expected = max(seq) - min(seq) + 1` 은 첫 수신 전에 잃은 패킷을 세지 못했다(BE 홍수가 talker 보다 1.5 s 먼저 큐를 채운다). talker 는 seq 0 부터 보내므로 `max(seq) + 1`. 커밋된 CI 리포트 재생성: `pfifo_fast_noclsf` 손실 38.95 → 38.96 %, 나머지 수치는 그대로 재현.
+- 문서 수치: README 요약의 "433 ms / 35 % loss" 는 서로 다른 조건(noclsf p50, fifo 손실)을 섞은 것 → 같은 큐 기준 "433 ms / 39 % → 0.05 ms / 0". "noclsf 는 fifo 와 통계적으로 같다" 는 틀린 서술(p = 9.7e-296, δ = −0.22 small) → "같은 430 ms 대". p50 비율 약 8,600배 → 약 8,900배. README 끝에 남아 있던 깨진 디렉터리 목록 조각 삭제.
+
+삭제
+- `results/k8s-2026-05/` 원본 CSV 9개와 그래프 (철회, 커밋 `67556cd` 이전 히스토리에 있음). 이를 읽던 CI 단계 삭제, `verify.sh --offline` 의 v1 예외 삭제, ADR-0016 개정.
+- 호출되지 않는 코드: talker `--vlan-priority` 별칭과 `--start-delay`, `metrics.run_metrics()`.
+
+변경
+- `test_integration.py` 는 이제 커밋된 CI 테스트베드 실측으로 README 표의 숫자를 고정한다.
+- README 를 줄이고(ADR·검증 표 중복 제거) 수치를 원본 CSV 재계산 값으로 맞춤. Python 파일 `ruff format` 적용.
+
 ## v0.3 — 2026-09 "honest datapath" (branch `portfolio/v2-honest-datapath`, PR #3)
 
 발견
@@ -14,7 +28,7 @@
 - `testbed/`: 단일 호스트 netns 테스트베드 (tbf 병목 + BE 홍수, 5 조건, 프로브/카운터/DSCP 메타데이터).
 - `analysis/`: `tsn-analysis` 패키지 (선형 백분위, 부트스트랩 CI, Mann-Whitney, Cliff's δ, 손실/무결성, 그래프, 리포트; 65 테스트).
 - CI: lint(shellcheck/ruff/kubeconform), BPF 빌드+테스트+tcx, analysis, testbed 실험 아티팩트.
-- `results/testbed/ci-34294518788/`: kernel 6.17 러너 실측 (fifo p50 433 ms / 손실 35 % → clsf p50 0.05 ms / 손실 0, DSCP 46 도착).
+- `results/testbed/ci-34294518788/`: kernel 6.17 러너 실측 (pfifo_fast_noclsf p50 433 ms / 손실 39 % → pfifo_fast_clsf p50 0.05 ms / 손실 0, DSCP 46 도착).
 - 문서: README 재작성, ADR 16개, ARCHITECTURE / RESULTS / LIMITATIONS / VERIFICATION / DATA_PROVENANCE / PAPER_MAPPING / AIDC_RELEVANCE / RUNBOOK.
 - K8s 오케스트레이션 재작성 (HTB 병목 + u32, BE 홍수 Job, kustomize ConfigMap 생성, 조건 이름 통일, meta.json) — cluster 미실행.
 
