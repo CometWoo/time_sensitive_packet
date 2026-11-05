@@ -171,8 +171,7 @@ def bootstrap_ci(
     while done < n_boot:
         k = min(chunk, n_boot - done)
         parts = [
-            _shift(r[rng.integers(0, r.size, size=(k, r.size))], skew_percentile)
-            for r in runs
+            _shift(r[rng.integers(0, r.size, size=(k, r.size))], skew_percentile) for r in runs
         ]
         sample = parts[0] if len(parts) == 1 else np.concatenate(parts, axis=1)
         boots[done : done + k] = stat(sample, 1)

@@ -47,8 +47,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common(s)
     s.add_argument("--baseline", default=None, help="reference condition (default: baseline/pfifo)")
     s.add_argument("--json", type=Path, default=None, help="write JSON summary here ('-' = stdout)")
-    s.add_argument("--markdown", type=Path, default=None,
-                   help="write Markdown summary here ('-' = stdout, the default)")
+    s.add_argument(
+        "--markdown",
+        type=Path,
+        default=None,
+        help="write Markdown summary here ('-' = stdout, the default)",
+    )
     s.add_argument("--n-boot", type=int, default=2000, help="bootstrap resamples (default 2000)")
     s.add_argument("--ci", type=float, default=0.95, help="confidence level (default 0.95)")
     s.add_argument("--seed", type=int, default=0, help="bootstrap RNG seed (default 0)")
@@ -62,8 +66,12 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--baseline", required=True, help="reference condition name")
     c.add_argument("--against", required=True, help="condition to compare with the baseline")
     c.add_argument("--stat", default="p99", help="statistic: p50, p99, p99.9, mean, max ...")
-    c.add_argument("--metric", default="latency", choices=("latency", "jitter"),
-                   help="which sample to compare (default latency)")
+    c.add_argument(
+        "--metric",
+        default="latency",
+        choices=("latency", "jitter"),
+        help="which sample to compare (default latency)",
+    )
     c.add_argument("--n-boot", type=int, default=2000)
     c.add_argument("--ci", type=float, default=0.95)
     c.add_argument("--seed", type=int, default=0)
@@ -114,15 +122,20 @@ def cmd_compare(args: argparse.Namespace) -> int:
     ds = build_dataset(args.results_dir, normalize_skew=args.normalize_skew)
     for name in (args.baseline, args.against):
         if name not in ds.conditions:
-            print(f"error: condition {name!r} not found; available: {ds.conditions}",
-                  file=sys.stderr)
+            print(
+                f"error: condition {name!r} not found; available: {ds.conditions}", file=sys.stderr
+            )
             return 2
     attr = "latency_ms" if args.metric == "latency" else "jitter_us"
     unit = "ms" if args.metric == "latency" else "us"
-    print(f"{args.metric} {args.stat}: {args.against} vs {args.baseline} "
-          f"(normalize_skew={args.normalize_skew})")
-    print(f"{'factor':<14}{'baseline [CI]':>30}{'against [CI]':>30}"
-          f"{'improv%':>10}{'p-value':>12}{'delta':>10}")
+    print(
+        f"{args.metric} {args.stat}: {args.against} vs {args.baseline} "
+        f"(normalize_skew={args.normalize_skew})"
+    )
+    print(
+        f"{'factor':<14}{'baseline [CI]':>30}{'against [CI]':>30}"
+        f"{'improv%':>10}{'p-value':>12}{'delta':>10}"
+    )
     found = False
     for fk in ds.factor_keys:
         a, b = ds.get(args.baseline, fk), ds.get(args.against, fk)

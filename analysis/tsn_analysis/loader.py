@@ -199,9 +199,7 @@ def load_csv(path: str | Path) -> Run:
 
     tos: np.ndarray | None = None
     if "tos" in columns:
-        tos = np.asarray(
-            [_to_int(v) if v.strip() else -1 for v in columns["tos"]], dtype=np.int64
-        )
+        tos = np.asarray([_to_int(v) if v.strip() else -1 for v in columns["tos"]], dtype=np.int64)
 
     parsed = parse_name(path.stem)
     return Run(

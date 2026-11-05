@@ -43,7 +43,11 @@ def test_build_summary_legacy(legacy_dir: Path):
     s = build_summary(legacy_dir, normalize_skew=True, n_boot=100)
     assert s["baseline"] == "baseline"
     assert [c["condition"] + "/" + c["factor"] for c in s["cells"]] == [
-        "baseline/cpu10", "proposed/cpu10", "baseline/cpu50", "proposed/cpu50", "proposed/cpu99",
+        "baseline/cpu10",
+        "proposed/cpu10",
+        "baseline/cpu50",
+        "proposed/cpu50",
+        "proposed/cpu99",
     ]
     assert [c["factor"] for c in s["comparisons"]] == ["cpu10", "cpu50"]
     m = s["comparisons"][0]["metrics"]

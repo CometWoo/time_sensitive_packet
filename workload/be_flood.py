@@ -9,6 +9,7 @@ qdisc 안에 **지속적인 backlog** 를 만든다. 우선순위 qdisc 가 효�
 사용법:
   python3 be_flood.py --target 10.10.2.2 --port 5001 --rate-mbps 30 --size 1400 --duration 15
 """
+
 import argparse
 import socket
 import time
@@ -37,8 +38,10 @@ def main():
     t0 = time.time_ns()
     deadline = t0 + int(args.duration * 1e9)
     next_tx = t0
-    print(f"be_flood -> {target}, {args.rate_mbps} Mbit/s, {args.size}B, {args.duration}s "
-          f"({1e9 / per_pkt_ns if per_pkt_ns else float('inf'):.0f} pkt/s)")
+    print(
+        f"be_flood -> {target}, {args.rate_mbps} Mbit/s, {args.size}B, {args.duration}s "
+        f"({1e9 / per_pkt_ns if per_pkt_ns else float('inf'):.0f} pkt/s)"
+    )
     try:
         while True:
             now = time.time_ns()
@@ -51,7 +54,7 @@ def main():
                         time.sleep((wait - 150_000) / 1e9)
                     continue
                 next_tx += per_pkt_ns
-                if now - next_tx > 50_000_000:      # 50 ms 이상 뒤처지면 리셋 (burst 방지)
+                if now - next_tx > 50_000_000:  # 50 ms 이상 뒤처지면 리셋 (burst 방지)
                     next_tx = now
             try:
                 sock.sendto(payload, target)
@@ -65,9 +68,19 @@ def main():
     print(f"be_flood 종료: sent={sent} errors={errors} elapsed={elapsed:.2f}s achieved={mbps:.1f} Mbit/s")
     if args.stats_file:
         import json
+
         with open(args.stats_file, "w") as f:
-            json.dump({"sent": sent, "errors": errors, "elapsed_s": elapsed, "achieved_mbps": mbps,
-                       "offered_mbps": args.rate_mbps, "size": args.size}, f)
+            json.dump(
+                {
+                    "sent": sent,
+                    "errors": errors,
+                    "elapsed_s": elapsed,
+                    "achieved_mbps": mbps,
+                    "offered_mbps": args.rate_mbps,
+                    "size": args.size,
+                },
+                f,
+            )
 
 
 if __name__ == "__main__":

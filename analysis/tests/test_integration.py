@@ -28,8 +28,18 @@ def _cell(summary: dict, condition: str) -> dict:
 def test_summary_on_committed_testbed_run(tmp_path: Path, capsys):
     js = tmp_path / "ci.json"
     rc = main(
-        ["summary", str(REAL_RESULTS), "--baseline", "fifo", "--json", str(js), "--markdown", "-",
-         "--n-boot", "200"]
+        [
+            "summary",
+            str(REAL_RESULTS),
+            "--baseline",
+            "fifo",
+            "--json",
+            str(js),
+            "--markdown",
+            "-",
+            "--n-boot",
+            "200",
+        ]
     )
     assert rc == 0
     out = capsys.readouterr().out

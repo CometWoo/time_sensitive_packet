@@ -6,6 +6,7 @@
   bpfmaps.py set-ts-config <pinned-map> <priority> <dscp> <flags>
   bpfmaps.py counters <pinned-ts_counters>       → 이름 붙은 카운터 JSON
 """
+
 import json
 import struct
 import subprocess
@@ -23,8 +24,9 @@ def _to_int(v):
 
 
 def dump_percpu(pinned):
-    out = subprocess.run(["bpftool", "-j", "map", "dump", "pinned", pinned],
-                         capture_output=True, text=True, check=True).stdout
+    out = subprocess.run(
+        ["bpftool", "-j", "map", "dump", "pinned", pinned], capture_output=True, text=True, check=True
+    ).stdout
     res = {}
     for e in json.loads(out):
         fmt = e.get("formatted")
@@ -41,9 +43,22 @@ def dump_percpu(pinned):
 def set_ts_config(pinned, priority, dscp, flags):
     key = struct.pack("<I", 0)
     val = struct.pack("<IIII", int(priority), int(dscp), int(flags), 0)
-    subprocess.run(["bpftool", "map", "update", "pinned", pinned,
-                    "key", "hex", *[f"{b:02x}" for b in key],
-                    "value", "hex", *[f"{b:02x}" for b in val]], check=True)
+    subprocess.run(
+        [
+            "bpftool",
+            "map",
+            "update",
+            "pinned",
+            pinned,
+            "key",
+            "hex",
+            *[f"{b:02x}" for b in key],
+            "value",
+            "hex",
+            *[f"{b:02x}" for b in val],
+        ],
+        check=True,
+    )
 
 
 def main(argv):

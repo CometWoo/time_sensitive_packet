@@ -15,6 +15,7 @@ SCHED_CLS(tc) 프로그램을 실행한다:
 (net/bpf/test_run.c convert___skb_to_skb) HW-accel VLAN 메타데이터 경로는
 여기서 검증하지 못한다 — 인라인 802.1Q 태그로만 검증한다.
 """
+
 from __future__ import annotations
 
 import json
@@ -45,7 +46,7 @@ TC_ACT_OK = 0
 
 # struct __sk_buff 오프셋 (include/uapi/linux/bpf.h)
 SKB_PRIORITY_OFF = 32
-SKB_CTX_SIZE = 192          # v6.x 크기. 5.15(184) 에서는 꼬리가 0 이면 허용됨.
+SKB_CTX_SIZE = 192  # v6.x 크기. 5.15(184) 에서는 꼬리가 0 이면 허용됨.
 
 
 # ── 패킷 빌더 ───────────────────────────────────────────────────────────────
@@ -77,14 +78,36 @@ IP_MF = 0x2000
 IP_OFFSET_MASK = 0x1FFF
 
 
-def ipv4(proto: int, payload: bytes, tos: int = 0, options: bytes = b"",
-         src="10.0.0.1", dst="10.0.0.2", ttl: int = 64, frag_off: int = 0) -> bytes:
+def ipv4(
+    proto: int,
+    payload: bytes,
+    tos: int = 0,
+    options: bytes = b"",
+    src="10.0.0.1",
+    dst="10.0.0.2",
+    ttl: int = 64,
+    frag_off: int = 0,
+) -> bytes:
     """frag_off: 플래그+오프셋 필드 그대로 (예: IP_MF | 0 = 첫 단편, 185 = 뒤 단편)"""
     assert len(options) % 4 == 0
     ihl = 5 + len(options) // 4
     total = ihl * 4 + len(payload)
-    hdr = struct.pack("!BBHHHBBH4s4s", (4 << 4) | ihl, tos, total, 0x1234, frag_off, ttl, proto, 0,
-                      bytes(map(int, src.split("."))), bytes(map(int, dst.split(".")))) + options
+    hdr = (
+        struct.pack(
+            "!BBHHHBBH4s4s",
+            (4 << 4) | ihl,
+            tos,
+            total,
+            0x1234,
+            frag_off,
+            ttl,
+            proto,
+            0,
+            bytes(map(int, src.split("."))),
+            bytes(map(int, dst.split("."))),
+        )
+        + options
+    )
     csum = ip_checksum(hdr)
     hdr = hdr[:10] + struct.pack("!H", csum) + hdr[12:]
     return hdr + payload
@@ -109,7 +132,7 @@ def udp_frame(dport: int, **ip_kw) -> bytes:
 def parse_ipv4_tos_and_csum_ok(frame: bytes, ip_off: int = 14) -> tuple[int, bool]:
     """(TOS 바이트, 헤더 체크섬이 올바른지)"""
     ihl = (frame[ip_off] & 0xF) * 4
-    hdr = frame[ip_off:ip_off + ihl]
+    hdr = frame[ip_off : ip_off + ihl]
     return hdr[1], ip_checksum(hdr) == 0
 
 
@@ -201,9 +224,21 @@ class LoadedProg:
         return {k: raw.get(i, 0) for k, i in CNT.items()}
 
     def map_update(self, name: str, key: bytes, value: bytes):
-        _run([BPFTOOL, "map", "update", "id", str(self.map_ids[name]),
-              "key", "hex", *[f"{b:02x}" for b in key],
-              "value", "hex", *[f"{b:02x}" for b in value]])
+        _run(
+            [
+                BPFTOOL,
+                "map",
+                "update",
+                "id",
+                str(self.map_ids[name]),
+                "key",
+                "hex",
+                *[f"{b:02x}" for b in key],
+                "value",
+                "hex",
+                *[f"{b:02x}" for b in value],
+            ]
+        )
 
     def set_config(self, priority: int = 0, dscp: int = 0, flags: int = 0):
         self.map_update("ts_config", struct.pack("<I", 0), struct.pack("<IIII", priority, dscp, flags, 0))
@@ -222,14 +257,31 @@ class LoadedProg:
         for f in (dout, cout):
             if f.exists():
                 f.unlink()
-        res = _run([BPFTOOL, "-j", "prog", "run", "pinned", self.pin,
-                    "data_in", str(din), "data_out", str(dout),
-                    "ctx_in", str(cin), "ctx_out", str(cout), "repeat", str(repeat)])
+        res = _run(
+            [
+                BPFTOOL,
+                "-j",
+                "prog",
+                "run",
+                "pinned",
+                self.pin,
+                "data_in",
+                str(din),
+                "data_out",
+                str(dout),
+                "ctx_in",
+                str(cin),
+                "ctx_out",
+                str(cout),
+                "repeat",
+                str(repeat),
+            ]
+        )
         j = json.loads(res.stdout)
         rv = j.get("return_value")
         if rv is None:
             rv = j.get("retval")
         rv = int(rv)
-        if rv >= 1 << 31:          # bpftool 은 u32 로 출력 → TC_ACT_UNSPEC(-1) 은 4294967295
+        if rv >= 1 << 31:  # bpftool 은 u32 로 출력 → TC_ACT_UNSPEC(-1) 은 4294967295
             rv -= 1 << 32
         return RunResult(rv, dout.read_bytes(), cout.read_bytes())
