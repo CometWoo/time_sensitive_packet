@@ -1,5 +1,5 @@
 {
-  "results_dir": "results\\testbed\\ci-34294518788\\ci",
+  "results_dir": "results/testbed/ci-34294518788/ci",
   "normalize_skew": false,
   "percentile_method": "linear",
   "baseline": "fifo",
@@ -62,13 +62,13 @@
         "std": 786.9108792220909
       },
       "loss": {
-        "expected": 29995.0,
+        "expected": 29999.0,
         "received": 19444.0,
         "unique": 19444.0,
-        "lost": 10551.0,
+        "lost": 10555.0,
         "duplicates": 0.0,
         "reorders": 0.0,
-        "loss_pct": 35.17586264377396
+        "loss_pct": 35.18450615020501
       },
       "throughput_kbps": {
         "mean": 674.2448445699679,
@@ -392,13 +392,13 @@
         "std": 384.82832000220577
       },
       "loss": {
-        "expected": 29991.0,
+        "expected": 29999.0,
         "received": 18311.0,
         "unique": 18311.0,
-        "lost": 11680.0,
+        "lost": 11688.0,
         "duplicates": 0.0,
         "reorders": 0.0,
-        "loss_pct": 38.94501683838485
+        "loss_pct": 38.961298709957
       },
       "throughput_kbps": {
         "mean": 633.8002463463417,

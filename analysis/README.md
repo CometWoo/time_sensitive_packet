@@ -39,8 +39,8 @@ File stems are parsed as `<mode>_cpu<N>` (condition + factor `cpu=N`), `<cond>_r
   exposes that the talker never reached 1 ms pacing (median receive gap 1.3-1.8 ms, receive
   spans 20-45 s for 10 000 packets), so throughput differs per run (264-561 kbit/s) and
   says nothing about the qdisc; read it together with `gap p50`.
-* Loss from sequence gaps (`expected = max(seq) - min(seq) + 1`), duplicates and reorders
-  reported separately.
+* Loss from sequence gaps (`expected = max(seq) + 1`: the talker counts from 0, so loss before
+  the first arrival is counted), duplicates and reorders reported separately.
 
 ## Figures
 

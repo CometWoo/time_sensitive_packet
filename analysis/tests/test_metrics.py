@@ -78,10 +78,10 @@ def test_loss_summary_hand_computed():
     assert loss["reorders"] == 1
 
 
-def test_loss_summary_clean_and_offset_start():
-    seq = np.arange(100, 200)
-    loss = loss_summary(seq)
-    assert loss["expected"] == 100 and loss["lost"] == 0 and loss["loss_pct"] == 0.0
+def test_loss_summary_counts_head_loss():
+    # the talker numbers packets from 0, so 0..99 never arriving is 100 lost packets
+    loss = loss_summary(np.arange(100, 200))
+    assert loss["expected"] == 200 and loss["lost"] == 100 and loss["loss_pct"] == 50.0
     assert loss["duplicates"] == 0 and loss["reorders"] == 0
 
 

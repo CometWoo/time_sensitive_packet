@@ -96,7 +96,8 @@ def jitter_summary(jitter_us: np.ndarray, method: str = "linear") -> dict[str, f
 def loss_summary(seq: np.ndarray) -> dict[str, float]:
     """Packet loss, duplicates and reorders derived from the sequence numbers.
 
-    * ``expected``   = ``max(seq) - min(seq) + 1`` (the sender's counter range);
+    * ``expected``   = ``max(seq) + 1`` (the talker numbers packets from 0, so packets
+      lost before the first arrival count too);
     * ``received``   = number of rows;
     * ``unique``     = number of distinct sequence numbers;
     * ``duplicates`` = ``received - unique``;
@@ -115,7 +116,8 @@ def loss_summary(seq: np.ndarray) -> dict[str, float]:
             "duplicates": 0.0,
             "reorders": 0.0,
         }
-    expected = int(arr.max() - arr.min() + 1)
+    # shortcut: tail loss is invisible here; use the talker's sent count if runs end under loss
+    expected = int(arr.max()) + 1
     unique = int(np.unique(arr).size)
     received = int(arr.size)
     lost = expected - unique

@@ -162,7 +162,7 @@ def main():
     # 손실은 고유 seq 기준으로: 중복은 손실을 가리지 않고, 재정렬은 '최대 seq 보다 작은 seq' 로 센다
     seqs = [r["seq"] for r in results]
     unique = len(set(seqs))
-    expected = max(seqs) - min(seqs) + 1
+    expected = max(seqs) + 1    # talker 는 seq 0 부터 보낸다: 첫 수신 전의 손실도 센다
     loss = expected - unique
     dups = len(seqs) - unique
     reorders = 0
