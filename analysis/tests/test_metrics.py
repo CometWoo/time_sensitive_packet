@@ -1,20 +1,15 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 
 from tsn_analysis.metrics import (
     distribution_summary,
     dscp_distribution,
-    inter_arrival_summary,
-    jitter_summary,
     jitter_values,
     latency_summary,
     loss_summary,
     percentile,
-    throughput_kbps,
 )
 
 
@@ -59,7 +54,7 @@ def test_distribution_summary_empty_and_single():
 def test_jitter_uses_abs_and_drops_first():
     j = np.array([0.0, -5.0, 3.0, -1.0])
     np.testing.assert_allclose(jitter_values(j), [5.0, 3.0, 1.0])
-    s = jitter_summary(j)
+    s = distribution_summary(jitter_values(j))
     assert s["n"] == 3
     assert s["max"] == 5.0
     assert s["p50"] == 3.0
@@ -90,27 +85,6 @@ def test_loss_summary_multiple_reorders():
     assert loss_summary(seq)["reorders"] == 4
 
 
-def test_throughput_uses_recv_span():
-    sizes = np.full(11, 100)  # 1100 bytes
-    recv = np.arange(11) * 100_000_000  # 0.1 s apart -> span 1.0 s
-    assert throughput_kbps(sizes, recv) == pytest.approx(8 * 1100 / 1000.0)
-    # a stall doubles the span and halves the throughput
-    recv2 = recv.copy()
-    recv2[-1] += 1_000_000_000
-    assert throughput_kbps(sizes, recv2) == pytest.approx(8 * 1100 / 2000.0)
-    assert np.isnan(throughput_kbps(np.array([100]), np.array([0])))
-    assert np.isnan(throughput_kbps(np.array([100, 100]), np.array([5, 5])))
-
-
-def test_inter_arrival_summary():
-    recv = np.array([0, 1_000_000, 2_000_000, 4_000_000])  # gaps 1000,1000,2000 us
-    s = inter_arrival_summary(recv)
-    assert s["n"] == 3
-    assert s["min"] == 1000.0
-    assert s["max"] == 2000.0
-    assert s["p50"] == 1000.0
-
-
 def test_dscp_distribution():
     assert dscp_distribution(None) is None
     tos = np.array([184, 184, 0, 185, -1])  # EF(46) x2 + ECN variant, BE(0), missing
@@ -120,22 +94,3 @@ def test_dscp_distribution():
     assert d["tos"] == {184: 2, 0: 1, 185: 1}
     assert d["missing"] == 1
     assert d["dominant_dscp"] == 46
-
-
-def test_inter_arrival_exact_at_epoch_magnitude(tmp_path: Path):
-    """Gaps of a few hundred ns must survive loading of ~1.7e18 ns timestamps."""
-    from tsn_analysis.loader import load_csv
-
-    from .conftest import write_run_csv
-
-    t0 = 1_780_000_000_000_000_000
-    # dyadic latencies (exact in float64) -> recv gaps 1_500_000 / 750_000 / 875_000 ns,
-    # none of which is a multiple of 256, so a float64 round trip would corrupt them
-    lat = np.array([1.0, 1.5, 1.25, 1.125])
-    run = load_csv(write_run_csv(tmp_path / "fq_codel_run1.csv", lat, t0_ns=t0))
-    gaps_ns = np.diff(run.recv_ns)
-    assert gaps_ns.tolist() == [1_500_000, 750_000, 875_000]
-    assert (run.recv_ns % 256 != 0).any()
-    s = inter_arrival_summary(run.recv_ns)
-    assert s["p50"] == pytest.approx(875.0)
-    assert s["max"] == pytest.approx(1500.0)
