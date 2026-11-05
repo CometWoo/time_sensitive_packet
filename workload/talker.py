@@ -50,12 +50,11 @@ def main():
     parser.add_argument("--size", type=int, default=128, help="패킷 크기 (bytes, 헤더 12B 포함)")
     parser.add_argument("--cpu", type=int, default=-1, help="CPU affinity (기본 미설정)")
     parser.add_argument("--realtime", action="store_true", help="SCHED_FIFO 사용")
-    parser.add_argument("--so-priority", "--vlan-priority", dest="so_priority", type=int, default=-1,
+    parser.add_argument("--so-priority", type=int, default=-1,
                         help="SO_PRIORITY 값 (skb->priority). 0..6 은 권한 불필요. "
                              "※ veth 를 건너면 0 으로 리셋됨 (호스트 qdisc 에는 전달되지 않음)")
     parser.add_argument("--tos", type=lambda v: int(v, 0), default=-1,
                         help="IP_TOS 값 (예: 0xb8 = DSCP EF). 애플리케이션이 직접 DSCP 를 찍을 때")
-    parser.add_argument("--start-delay", type=float, default=0.0, help="송신 시작 전 대기(초)")
     parser.add_argument("--log", default="", help="송신 드리프트 로그 CSV 경로")
     parser.add_argument("--quiet", action="store_true", help="진행 로그 생략")
     parser.add_argument("--strict-pacing", action="store_true",
@@ -90,8 +89,6 @@ def main():
 
     print(f"Talker: {args.target} -> {target_ip}:{args.port}, interval={args.interval}ms, "
           f"count={args.count}, size={args.size}B, 예상 {args.count * interval_s:.1f}s")
-    if args.start_delay > 0:
-        time.sleep(args.start_delay)
 
     # 페이싱은 CLOCK_MONOTONIC(NTP 스텝에 영향받지 않음), 패킷 스탬프는 CLOCK_REALTIME(수신측과 비교용)
     sent = errors = 0
