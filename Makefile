@@ -1,14 +1,9 @@
-# 루트 Makefile — 자주 쓰는 진입점 모음 (Linux / WSL2)
-#
-#   make bpf            eBPF 프로그램 + tcx 로더 빌드           (bpf/)
-#   make test           BPF 단위 테스트 + 분석 패키지 테스트      (root 필요: sudo make test)
-#   make test-tcx       tcx 체인 통합 테스트 (kernel >= 6.6, root)
-#   make testbed        netns 테스트베드 실험 (root)             → testbed/runs/local
-#   make report         테스트베드 결과 요약/그래프              → testbed/runs/local/report
-#   make lint           shellcheck / ruff
-#   make clean
-#
-# Kubernetes 클러스터 실험은 scripts/experiment.sh (docs/RUNBOOK.md 참조).
+# make bpf        eBPF 오브젝트 + tcx 로더 빌드
+# make test       BPF 단위 테스트(root) + 분석 패키지 테스트
+# make test-tcx   tcx 체인 테스트 (root, kernel >= 6.6)
+# make testbed    netns 테스트베드 실행 (root) -> testbed/runs/local
+# make report     $(OUT) 의 summary.md 와 그래프 생성
+# make lint       shellcheck + ruff
 
 PYTHON ?= python3
 RUNS   ?= 3
@@ -40,7 +35,7 @@ testbed: bpf
 
 report:
 	$(PYTHON) -m pip install -q -e ./analysis
-	tsn-analysis summary $(OUT) --baseline fifo --markdown $(OUT)/report/summary.md --json $(OUT)/report/summary.json
+	tsn-analysis summary $(OUT) --baseline fifo --markdown $(OUT)/report/summary.md
 	tsn-analysis plot $(OUT) --out $(OUT)/report
 
 lint:

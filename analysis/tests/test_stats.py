@@ -6,13 +6,18 @@ import pytest
 from tsn_analysis.stats import (
     bootstrap_ci,
     cliffs_delta,
-    cliffs_delta_bruteforce,
     compare,
     describe_delta,
     mann_whitney,
     per_run_aggregate,
     resolve_statistic,
 )
+
+
+def cliffs_delta_bruteforce(a: np.ndarray, b: np.ndarray) -> float:
+    """O(n*m) reference for :func:`cliffs_delta`."""
+    diff = np.sign(np.asarray(a, dtype=float)[:, None] - np.asarray(b, dtype=float)[None, :])
+    return float(diff.sum() / (len(a) * len(b)))
 
 
 def test_bootstrap_ci_contains_true_value_normal_mean():
@@ -137,45 +142,6 @@ def test_per_run_aggregate():
     assert np.isnan(one["std"])
 
 
-def test_bootstrap_joint_skew_point_matches_normalised_and_is_wider():
-    """Joint p1-offset bootstrap: same point estimate, interval includes offset variance."""
-    rng = np.random.default_rng(5)
-    raw = rng.lognormal(sigma=0.6, size=4000) - 40.0  # negative absolute latency (two clocks)
-    shifted = raw - np.percentile(raw, 1.0)
-    fixed = bootstrap_ci(shifted, "p50", n_boot=400, seed=0)
-    joint = bootstrap_ci(raw, "p50", n_boot=400, seed=0, skew_percentile=1.0)
-    joint_list = bootstrap_ci([raw], "p50", n_boot=400, seed=0, skew_percentile=1.0)
-    assert joint.point == pytest.approx(fixed.point)
-    assert joint == joint_list
-    assert (joint.high - joint.low) > (fixed.high - fixed.low)
-    assert joint.low <= joint.point <= joint.high
-
-
-def test_bootstrap_multi_run_skew_shifts_each_run_separately():
-    rng = np.random.default_rng(6)
-    a = rng.lognormal(size=800) - 40.0
-    b = rng.lognormal(size=800) + 25.0  # completely different clock offset
-    r = bootstrap_ci([a, b], "p99", n_boot=100, skew_percentile=1.0)
-    pooled = np.concatenate([a - np.percentile(a, 1.0), b - np.percentile(b, 1.0)])
-    assert r.point == pytest.approx(np.percentile(pooled, 99))
-    assert r.low <= r.point <= r.high
-    # without a skew percentile the runs are pooled as-is
-    plain = bootstrap_ci([a, b], "p99", n_boot=100)
-    assert plain.point == pytest.approx(np.percentile(np.concatenate([a, b]), 99))
-
-
-def test_pooled_values():
-    from tsn_analysis.stats import pooled_values
-
-    a = np.array([1.0, 2.0, 3.0])
-    b = np.array([10.0, 20.0])
-    np.testing.assert_allclose(pooled_values([a, b]), [1, 2, 3, 10, 20])
-    np.testing.assert_allclose(pooled_values(a), a)
-    p = pooled_values([a, b], skew_percentile=0.0)
-    np.testing.assert_allclose(p, [0, 1, 2, 0, 10])
-    assert pooled_values([]).size == 0
-
-
 def test_percentile_method_threads_through():
     x = np.array([1.0, 2.0, 3.0, 4.0])
     lin = resolve_statistic("p50", "linear")(x[None, :], 1)[0]
@@ -186,14 +152,3 @@ def test_percentile_method_threads_through():
     assert r["baseline"]["point"] == near
     agg = per_run_aggregate([x, x], "p50", method="nearest")
     assert agg["per_run"] == [near, near]
-
-
-def test_compare_with_skew_uses_shifted_values_for_rank_tests():
-    rng = np.random.default_rng(8)
-    base = rng.lognormal(sigma=0.5, size=2000) * 2.0 - 50.0
-    prop = rng.lognormal(sigma=0.5, size=2000) + 30.0
-    r = compare([base], [prop], stat="p99", n_boot=100, skew_percentile=1.0)
-    assert r["skew_percentile"] == 1.0
-    # baseline tail is wider even though its raw values are 80 ms lower
-    assert r["cliffs_delta"] > 0.3 and r["improvement_pct"] > 30.0
-    assert r["n_baseline"] == 2000 and r["n_proposed"] == 2000

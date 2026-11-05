@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""bpfmaps.py — 테스트베드용 bpftool map 헬퍼 (pinned map 읽기/쓰기)
+"""bpftool 로 pinned map 을 읽고 쓰는 테스트베드용 헬퍼.
 
-사용:
-  bpfmaps.py dump-percpu <pinned-map>            → {"0": 12, "1": 3, ...} JSON
-  bpfmaps.py set-ts-config <pinned-map> <priority> <dscp> <flags>
-  bpfmaps.py counters <pinned-ts_counters>       → 이름 붙은 카운터 JSON
+bpfmaps.py dump-percpu <pinned-map>          {"0": 12, "1": 3, ...}
+bpfmaps.py counters <pinned-ts_counters>     카운터 이름별 합계
+bpfmaps.py set-ts-config <pinned-map> <priority> <dscp> <flags>
 """
 
 import json

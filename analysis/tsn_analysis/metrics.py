@@ -1,17 +1,8 @@
-"""Per-run descriptive metrics: percentiles, loss, throughput, inter-arrival, DSCP.
+"""Per-run metrics: percentiles, jitter, loss and DSCP.
 
-Percentile method
------------------
-Every percentile in this package goes through :func:`percentile`, which calls
-``numpy.percentile(..., method="linear")``.  The legacy scripts mixed two
-definitions: ``sorted(x)[int(n * 0.99)]`` (a nearest-rank variant that is
-biased upward by up to one sample and jumps discretely) and numpy's default.
-``linear`` is Hyndman & Fan type 7 - the same definition R, Excel, pandas and
-numpy use by default - it interpolates between neighbouring order statistics,
-so it is continuous in the data and unbiased for the median.  With n = 10000
-the two definitions differ by at most one sample, which matters only in the
-extreme tail (p99.9, max).  The ``method`` parameter is exposed so a reader can
-check sensitivity (e.g. ``method="nearest"`` or ``"inverted_cdf"``).
+Every percentile goes through :func:`percentile`, i.e. ``numpy.percentile`` with
+``method="linear"`` (Hyndman & Fan type 7, numpy's default). ``method`` is a parameter
+so the sensitivity to that choice can be checked.
 """
 
 from __future__ import annotations
@@ -76,19 +67,10 @@ def latency_summary(latency_ms: np.ndarray, method: str = "linear") -> dict[str,
 
 
 def jitter_values(jitter_us: np.ndarray) -> np.ndarray:
-    """Jitter sample used for statistics: ``abs(jitter_us[1:])``.
-
-    The first row of every run carries ``jitter = 0`` by construction (no
-    previous packet), so it is dropped; the sign only encodes whether the
-    inter-arrival gap grew or shrank, and TSN cares about the magnitude.
-    """
+    """``abs(jitter_us[1:])``: the first row has no previous packet (always 0), and the
+    sign only says whether the gap grew or shrank."""
     arr = np.asarray(jitter_us, dtype=np.float64)
     return np.abs(arr[1:])
-
-
-def jitter_summary(jitter_us: np.ndarray, method: str = "linear") -> dict[str, float]:
-    """Percentile summary of ``abs(jitter_us[1:])`` in microseconds."""
-    return distribution_summary(jitter_values(jitter_us), LATENCY_PERCENTILES, method)
 
 
 def loss_summary(seq: np.ndarray) -> dict[str, float]:
@@ -130,32 +112,6 @@ def loss_summary(seq: np.ndarray) -> dict[str, float]:
         "duplicates": float(received - unique),
         "reorders": float(reorders),
     }
-
-
-def throughput_kbps(pkt_size: np.ndarray, recv_ns: np.ndarray) -> float:
-    """Received throughput in kilobit/s: ``8 * total_bytes / recv_span_s``.
-
-    The span is measured between the first and last *received* timestamp of
-    the run, so a run that stalls (or loses its final packets) is reported
-    honestly.  The legacy script assumed ``(n - 1) * send_interval`` which
-    silently ignored loss and any pause in delivery.  Returns ``nan`` when the
-    span is zero (fewer than two packets or identical timestamps).
-    """
-    sizes = np.asarray(pkt_size, dtype=np.float64)
-    ts = np.asarray(recv_ns, dtype=np.int64)
-    if sizes.size < 2 or ts.size < 2:
-        return float("nan")
-    span_s = float(ts.max() - ts.min()) / 1e9
-    if span_s <= 0:
-        return float("nan")
-    return 8.0 * float(sizes.sum()) / span_s / 1000.0
-
-
-def inter_arrival_summary(recv_ns: np.ndarray, method: str = "linear") -> dict[str, float]:
-    """Summary of consecutive receive gaps ``diff(recv_ns)`` in microseconds."""
-    ts = np.asarray(recv_ns, dtype=np.int64)
-    gaps_us = np.diff(ts).astype(np.float64) / 1e3
-    return distribution_summary(gaps_us, (50.0, 90.0, 99.0, 99.9), method)
 
 
 def dscp_distribution(tos: np.ndarray | None) -> dict[str, Any] | None:

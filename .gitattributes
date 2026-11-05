@@ -1,14 +1,12 @@
-# Linux 대상 저장소: 셸/파이썬/C/YAML 은 항상 LF (WSL·VM 에서 그대로 실행되도록)
+# Linux netns/VM 에서 바로 실행하므로 Windows 체크아웃에서도 LF 유지
 * text=auto
 *.sh text eol=lf
 *.py text eol=lf
 *.c text eol=lf
 *.h text eol=lf
-*.yaml text eol=lf
 *.yml text eol=lf
 *.toml text eol=lf
 *.md text eol=lf
-*.env.example text eol=lf
+*.csv text eol=lf
 Makefile text eol=lf
 *.png binary
-*.csv text eol=lf

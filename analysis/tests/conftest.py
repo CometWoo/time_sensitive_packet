@@ -1,4 +1,4 @@
-"""Shared fixtures: synthetic CSV writers that mimic both testbed naming schemes."""
+"""Synthetic listener CSVs."""
 
 from __future__ import annotations
 
@@ -50,42 +50,22 @@ def write_run_csv(
 
 
 def lognormal_latency(rng: np.random.Generator, n: int, scale: float) -> np.ndarray:
-    """Heavy-tailed positive latencies (ms) resembling the real distributions."""
+    """Heavy-tailed positive latencies in ms."""
     return scale * rng.lognormal(mean=0.0, sigma=0.6, size=n) + 0.5
 
 
 @pytest.fixture
-def legacy_dir(tmp_path: Path) -> Path:
-    """``<mode>_cpu<N>.csv`` files with baseline slower than proposed; cpu99 proposed-only."""
-    rng = np.random.default_rng(1)
-    d = tmp_path / "legacy"
-    for cpu in (10, 50):
-        write_run_csv(d / f"baseline_cpu{cpu}.csv", lognormal_latency(rng, 600, 2.0))
-        write_run_csv(d / f"proposed_cpu{cpu}.csv", lognormal_latency(rng, 600, 1.0))
-    write_run_csv(d / "proposed_cpu99.csv", lognormal_latency(rng, 600, 1.5))
-    return d
-
-
-@pytest.fixture
-def newstyle_dir(tmp_path: Path) -> Path:
-    """``<cond>_run<k>.csv`` files with 3 runs each and a tos column."""
+def run_dir(tmp_path: Path) -> Path:
+    """Three runs each: fifo (slow), pfifo_fast_noclsf, prio_clsf (fast, DSCP EF)."""
     rng = np.random.default_rng(2)
-    d = tmp_path / "newstyle"
+    d = tmp_path / "runs"
+    n = 500
     for k in range(1, 4):
-        n = 500
+        write_run_csv(d / f"fifo_run{k}.csv", lognormal_latency(rng, n, 2.0), tos=np.zeros(n))
         write_run_csv(
-            d / f"pfifo_run{k}.csv",
-            lognormal_latency(rng, n, 2.0),
-            tos=np.full(n, 0),
+            d / f"prio_clsf_run{k}.csv", lognormal_latency(rng, n, 1.0), tos=np.full(n, 46 << 2)
         )
         write_run_csv(
-            d / f"prio_class_run{k}.csv",
-            lognormal_latency(rng, n, 1.0),
-            tos=np.full(n, 46 << 2),  # EF
-        )
-        write_run_csv(
-            d / f"pfifo_fast_noclass_run{k}.csv",
-            lognormal_latency(rng, n, 1.5),
-            tos=np.full(n, 0),
+            d / f"pfifo_fast_noclsf_run{k}.csv", lognormal_latency(rng, n, 1.5), tos=np.zeros(n)
         )
     return d

@@ -1,39 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * ts_classifier.c — 호스트 물리 NIC egress 의 time-sensitive 패킷 분류기
- * ---------------------------------------------------------------------------
- * 어디에 붙는가 (설계 결정: docs/adr/0003-classify-at-host-nic-egress.md):
- *   호스트 netns 의 **물리 NIC egress** hook. 패킷이 qdisc 에 enqueue 되기 직전
- *   (__dev_queue_xmit → sch_handle_egress → __dev_xmit_skb) 에 실행되므로,
- *   여기서 설정한 skb->priority 를 prio / pfifo_fast / mqprio 가 그대로 본다.
+ * ts_classifier: 호스트 NIC egress 에서 TS 패킷에 skb->priority 와 DSCP 를 붙인다.
  *
- *   Pod 내부(eth0 egress)나 SO_PRIORITY 로 설정한 priority 는 veth 를 건너는 순간
- *   ____dev_forward_skb() 가 `skb->priority = 0` 으로 지워 버린다
- *   (include/linux/netdevice.h: v5.15 L4140, v6.8 L4110). 컨테이너 안에서 무엇을
- *   하든 호스트 qdisc 는 priority 0 만 본다 — 분류는 반드시 호스트 쪽, qdisc 직전.
+ * 컨테이너 안에서 준 priority 는 veth 를 건널 때 ____dev_forward_skb() 가 0 으로 지운다
+ * (include/linux/netdevice.h). 그래서 분류는 호스트 쪽, qdisc 에 들어가기 직전에 한다.
  *
- * Cilium(tcx) 과의 공존:
- *   kernel >= 6.6 에서 Cilium 은 tcx 로 붙고, cil_to_netdev 가 TC_ACT_OK 를 반환하면
- *   legacy clsact 필터는 실행되지 않는다 (net/core/dev.c sch_handle_egress:
- *   tcx_run() 결과가 TC_ACT_UNSPEC 이 아니면 tc_run() 을 건너뜀).
- *   → 이 프로그램은 tcx 체인의 **맨 앞(BPF_F_BEFORE)** 에 붙이고(tools/tcx_attach.c)
- *     TC_ACT_UNSPEC(= TCX_NEXT) 을 반환해 Cilium 프로그램이 이어서 실행되게 한다.
- *   legacy clsact(kernel < 6.6) 에서도 UNSPEC 은 "다음 필터로 계속" 이라 안전하다.
+ * kernel >= 6.6 에서는 tcx 프로그램이 TC_ACT_UNSPEC 이 아닌 값을 돌려주면 sch_handle_egress()
+ * 가 legacy tc 필터를 건너뛴다. Cilium 처럼 TC_ACT_OK 를 돌려주는 tcx 프로그램이 이미 있는
+ * NIC 에서는 tools/tcx_attach 로 체인 맨 앞(BPF_F_BEFORE)에 붙인다. 이 프로그램은 항상
+ * TC_ACT_UNSPEC(= TCX_NEXT)을 돌려주므로 뒤 프로그램도 그대로 돈다.
  *
- * 하는 일:
- *   1. TS 판별: AVTP EtherType(0x22F0) | 802.1Q/802.1ad 외곽 태그 PCP >= 5 |
- *      IPv4/UDP 목적지 포트 == 6000(기본) 또는 ts_udp_ports map 에 등록된 포트
- *   2. TS 면 skb->priority = cfg.priority (기본 6). **TS 가 아니면 건드리지 않는다**
- *      (다른 애플리케이션이 설정한 priority 를 지우지 않기 위해 — ADR-0004).
- *   3. (옵션) TS 이고 IPv4 이면 DSCP 재기록 + IPv4 헤더 체크섬 증분 갱신
- *      → 물리 패브릭 스위치가 큐/PFC 클래스로 매핑할 수 있는 유일한 신호.
- *   4. PERCPU 카운터로 분류 사유별 통계 (bpftool map dump name ts_counters)
+ * TS 판별: AVTP EtherType, 바깥 VLAN 태그 PCP >= 5, IPv4/UDP 목적지 포트 6000 또는
+ * ts_udp_ports map 에 넣은 포트. TS 가 아니면 priority 를 건드리지 않는다.
  *
- * 빌드/테스트: make -C bpf && sudo make -C bpf test
- * 로드 (legacy clsact):
- *   tc qdisc add dev $IF clsact
  *   tc filter add dev $IF egress bpf da obj build/ts_classifier.bpf.o sec tc
- * 로드 (tcx, Cilium 앞):
  *   tools/tcx_attach attach $IF build/ts_classifier.bpf.o /sys/fs/bpf/ts_clsf egress before
  */
 
@@ -49,7 +29,6 @@
 
 char _license[] SEC("license") = "GPL";
 
-/* ── maps ───────────────────────────────────────────────────────────────── */
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
 	__uint(max_entries, 1);
@@ -57,7 +36,7 @@ struct {
 	__type(value, struct ts_config);
 } ts_config SEC(".maps");
 
-/* 런타임에 추가하는 TS UDP 목적지 포트 (호스트 바이트 오더 u16 → 1) */
+/* 추가 TS 포트. key 는 호스트 바이트 오더 u16 */
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 64);
@@ -65,7 +44,7 @@ struct {
 	__type(value, __u8);
 } ts_udp_ports SEC(".maps");
 
-/* PERCPU: 원자 연산 없이 코어별 증가 → 사용자 공간에서 합산 */
+/* CPU 별로 세고 사용자 공간에서 더한다. 원자 연산이 필요 없다 */
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__uint(max_entries, CNT_MAX);
@@ -92,10 +71,8 @@ struct parse_result {
 };
 
 /*
- * 반환: 1 = TS 패킷, 0 = 일반 패킷.  pr->reason 에 분류 사유(카운터 인덱스) 기록.
- *
- * verifier 규칙: 모든 헤더 접근 전에 (ptr + 1) > data_end 검사.
- * VLAN 태그는 최대 2겹(802.1ad QinQ) 까지만 본다 — 루프 언롤로 오프셋을 상수화.
+ * TS 면 1. pr->reason 에 카운터 인덱스를 남긴다.
+ * VLAN 은 QinQ 까지 2겹만 본다. 루프를 펼쳐야 verifier 가 오프셋 범위를 안다.
  */
 static __always_inline int classify(struct __sk_buff *skb, const struct ts_config *cfg,
 				    struct parse_result *pr)
@@ -114,13 +91,13 @@ static __always_inline int classify(struct __sk_buff *skb, const struct ts_confi
 	}
 	proto = eth->h_proto;
 
-	/* 드라이버가 VLAN 태그를 skb 메타데이터로 뺀 경우 (vlan_present) */
+	/* 드라이버가 태그를 skb 메타데이터로 떼어 낸 경우 */
 	if (skb->vlan_present) {
 		pcp = (skb->vlan_tci >> 13) & 0x7;
 		has_pcp = 1;
 	}
 
-	/* 인라인 VLAN 태그 (802.1Q / 802.1ad). 외곽 태그의 PCP 가 스위치가 보는 값. */
+	/* 패킷에 남은 태그. 스위치가 보는 건 바깥 태그의 PCP 다. */
 #pragma unroll
 	for (int i = 0; i < 2; i++) {
 		struct vlan_hdr *vh;
@@ -140,13 +117,13 @@ static __always_inline int classify(struct __sk_buff *skb, const struct ts_confi
 		off += sizeof(*vh);
 	}
 
-	/* 분류 1: AVTP (IEEE 1722) — L2 프레임, IP 아님 */
+	/* AVTP 는 L2 프레임이라 여기서 끝 */
 	if (proto == bpf_htons(AVTP_ETHERTYPE)) {
 		pr->reason = CNT_TS_AVTP;
 		return 1;
 	}
 
-	/* 분류 2: VLAN PCP >= 5. IP 라면 DSCP 마킹을 위해 ip_off 도 계속 찾는다. */
+	/* PCP 로 TS 가 돼도 IPv4 면 DSCP 를 찍어야 하니 ip_off 를 계속 찾는다 */
 	if (has_pcp && pcp >= TS_VLAN_PCP_MIN)
 		pr->reason = CNT_TS_PCP;
 
@@ -161,18 +138,15 @@ static __always_inline int classify(struct __sk_buff *skb, const struct ts_confi
 		}
 		if (ip->version != 4)
 			goto done;
-		ihl = ip->ihl * 4;              /* 4-bit 필드 → 0..60, 옵션 포함 길이 */
+		ihl = ip->ihl * 4;              /* 옵션 포함 헤더 길이 */
 		if (ihl < sizeof(*ip))
 			goto done;
-		/* IP 단편은 TS 로 보지 않는다 (커널 ip_is_fragment() 와 같은 판정).
-		 * 첫 단편에만 UDP 헤더가 있고 뒤 단편에는 없으므로, 포트로 분류하면 한 데이터그램의
-		 * 조각들이 서로 다른 밴드로 갈라져 재조립 지연·재정렬을 만든다. 128 B TS 패킷은
-		 * 단편화되지 않으므로 실험에는 영향이 없다. */
+		/* 단편은 일반 패킷으로 둔다(ip_is_fragment() 와 같은 판정). UDP 헤더는 첫 단편에만
+		 * 있어서, 포트로 나누면 한 데이터그램의 조각이 서로 다른 band 로 갈라진다. */
 		if (ip->frag_off & bpf_htons(TS_IP_MF | TS_IP_OFFSET))
 			goto done;
 		pr->ip_off = off;
 
-		/* 분류 3: UDP 목적지 포트 */
 		if (ip->protocol == IPPROTO_UDP) {
 			struct udphdr *udp = data + off + ihl;
 			__u16 dport;
@@ -201,11 +175,8 @@ done:
 }
 
 /*
- * IPv4 DSCP 재기록. 반환: 1 = 변경함, 0 = 이미 같은 값, <0 = 실패
- *
- * TOS 바이트는 IPv4 헤더 첫 16-bit 워드(version/IHL | TOS)의 하위 바이트.
- * 헤더 체크섬은 bpf_l3_csum_replace 로 해당 워드만 증분 갱신한다
- * (RFC 1624 방식 — 전체 재계산 불필요). ECN 비트(하위 2bit)는 보존.
+ * DSCP 를 바꿨으면 1, 이미 같으면 0, 실패하면 -1. ECN 2비트는 그대로 둔다.
+ * TOS 는 헤더 첫 16비트 워드의 아래 바이트라서 그 워드만으로 체크섬을 증분 갱신한다(RFC 1624).
  */
 static __always_inline int mark_dscp(struct __sk_buff *skb, __u32 ip_off, __u8 dscp)
 {
@@ -245,7 +216,7 @@ int ts_classifier(struct __sk_buff *skb)
 
 	if (!classify(skb, &cfg, &pr)) {
 		count(pr.reason);
-		return TC_ACT_UNSPEC;          /* 일반 패킷: priority 그대로, 다음 프로그램으로 */
+		return TC_ACT_UNSPEC;          /* priority 그대로 다음 프로그램으로 */
 	}
 
 	skb->priority = cfg.priority ? cfg.priority : TS_DEFAULT_PRIORITY;
@@ -258,5 +229,5 @@ int ts_classifier(struct __sk_buff *skb)
 			count(CNT_DSCP_MARKED);
 	}
 
-	return TC_ACT_UNSPEC;                  /* TCX_NEXT: Cilium 등 뒤 프로그램 계속 실행 */
+	return TC_ACT_UNSPEC;                  /* TCX_NEXT: 뒤 tcx 프로그램도 돈다 */
 }

@@ -1,8 +1,5 @@
-"""Integration test against the committed CI testbed run (results/testbed/ci-34294518788).
-
-Pins the headline numbers quoted in README.md and docs/RESULTS.md, so a change in the
-analysis code that moves them fails here.
-"""
+"""Pins the README numbers to the committed CI run (results/testbed/ci-34294518788):
+an analysis change that moves them fails here."""
 
 from __future__ import annotations
 

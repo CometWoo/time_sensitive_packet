@@ -1,16 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * prio_probe.c — skb->priority 히스토그램 프로브
+ * prio_probe: 지나가는 패킷의 skb->priority 를 히스토그램으로 센다. 패킷은 건드리지 않는다.
  *
- * 목적: "Pod 안에서 SO_PRIORITY=6 을 설정해도 veth 를 건너면 0 이 된다" 를
- *       추측이 아니라 **측정**으로 보이기 위한 관찰 도구.
+ * 테스트베드는 veth 를 막 건넌 지점(vs_host ingress)과 NIC 역할의 vr_host egress 에 붙여서,
+ * 송신 소켓이 SO_PRIORITY 6 을 줘도 veth 뒤에서는 0 이라는 걸 숫자로 확인한다.
  *
- * 사용: 호스트측 veth(lxc* / veth-s) ingress 와 물리 NIC egress 양쪽에 붙이고
- *       bpftool map dump name prio_hist 로 값 분포를 비교한다.
- *         tc qdisc add dev veth-s clsact
- *         tc filter add dev veth-s ingress bpf da obj build/prio_probe.bpf.o sec tc
- *
- * 반환 TC_ACT_UNSPEC: 관찰만 하고 패킷 처리에는 관여하지 않는다.
+ *   tc filter add dev $IF ingress bpf da obj build/prio_probe.bpf.o sec tc
  */
 #include <linux/bpf.h>
 #include <linux/pkt_cls.h>
@@ -18,7 +13,7 @@
 
 char _license[] SEC("license") = "GPL";
 
-#define PRIO_HIST_BUCKETS 16   /* priority 0..14, 15 = "15 이상" (TC_H_MAJ 형식 등) */
+#define PRIO_HIST_BUCKETS 16   /* 0..14, 마지막 칸은 15 이상(classid 형식 priority 포함) */
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);

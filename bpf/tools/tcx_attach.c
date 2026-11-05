@@ -1,21 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * tcx_attach.c — tcx(BPF_TCX_EGRESS/INGRESS) 링크 기반 attach 도구 (libbpf >= 1.3, kernel >= 6.6)
+ * tcx_attach: BPF 프로그램을 tcx 체인 맨 앞이나 맨 뒤에 붙인다 (libbpf >= 1.3, kernel >= 6.6).
  *
- * 왜 tc(8) 대신 이 도구인가:
- *   iproute2 `tc filter add ... bpf` 는 legacy clsact 에만 붙는다. kernel >= 6.6 에서
- *   Cilium 은 tcx 로 붙고, Cilium 프로그램이 TC_ACT_OK 를 반환하면 legacy clsact 필터는
- *   실행조차 되지 않는다(net/core/dev.c sch_handle_egress). 우리 분류기가 반드시 실행되려면
- *   tcx 체인 **앞(BPF_F_BEFORE)** 에 붙어야 하고, 그 순서 제어는 bpf(2) 의
- *   BPF_LINK_CREATE + relative flags 로만 가능하다. bpftool 도 순서 플래그를 노출하지 않는다.
+ * tc(8) 는 legacy clsact 에만 붙는다. tcx 체인에서의 순서는 BPF_LINK_CREATE 의
+ * BPF_F_BEFORE/BPF_F_AFTER 로 정한다.
  *
- * 사용법:
  *   tcx_attach attach <ifname> <obj.bpf.o> <pin-path> [egress|ingress] [before|after]
  *   tcx_attach detach <pin-path>
  *   tcx_attach query  <ifname> [egress|ingress]
  *
- * 링크를 bpffs 에 pin 하므로 프로세스가 종료돼도 attach 가 유지되고,
- * detach 는 pin 파일을 지우는 것으로 끝난다 (Cilium 이 재시작해도 우리 링크는 남는다).
+ * 링크는 bpffs 에 pin 한다. 프로세스가 끝나도 붙어 있고, detach 는 pin 을 지우는 것으로 끝난다.
  */
 #include <errno.h>
 #include <net/if.h>
@@ -70,9 +64,8 @@ static int do_attach(int argc, char **argv)
 		fprintf(stderr, "no program in %s\n", objpath);
 		return 1;
 	}
-	/* SEC("tc") 는 expected_attach_type 이 0 이다. bpf_program__attach_tcx() 는 이 값을
-	 * BPF_LINK_CREATE 의 attach_type 으로 그대로 쓰므로, **로드 전에** BPF_TCX_EGRESS/INGRESS
-	 * 로 바꿔 둬야 한다 (로드 후 set_* 은 -EBUSY 로 무시됨 → 커널이 EINVAL 반환). */
+	/* SEC("tc") 는 expected_attach_type 이 0 이고, attach_tcx() 는 그 값을 attach_type 으로
+	 * 넘겨 EINVAL 을 받는다. 로드한 뒤에는 바꿀 수 없으니(-EBUSY) 여기서 정한다. */
 	bpf_program__set_type(prog, BPF_PROG_TYPE_SCHED_CLS);
 	if (bpf_program__set_expected_attach_type(prog, dir)) {
 		fprintf(stderr, "set_expected_attach_type failed: %s\n", strerror(errno));
@@ -83,7 +76,7 @@ static int do_attach(int argc, char **argv)
 		return 1;
 	}
 
-	/* relative_fd/id = 0 + BPF_F_BEFORE → 체인 맨 앞, BPF_F_AFTER → 맨 뒤 */
+	/* relative_fd 없이 BEFORE 면 맨 앞, AFTER 면 맨 뒤 */
 	opts.flags = before ? BPF_F_BEFORE : BPF_F_AFTER;
 	link = bpf_program__attach_tcx(prog, ifindex, &opts);
 	if (!link) {
@@ -100,7 +93,7 @@ static int do_attach(int argc, char **argv)
 	       bpf_program__name(prog), objpath, ifname,
 	       dir == BPF_TCX_EGRESS ? "egress" : "ingress",
 	       before ? "head" : "tail", pin);
-	/* link fd 는 pin 에 의해 살아남는다 — destroy 하지 말고 그냥 종료 */
+	/* pin 이 링크를 붙잡고 있으니 destroy 하지 않고 끝낸다 */
 	return 0;
 }
 

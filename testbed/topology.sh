@@ -1,26 +1,18 @@
 #!/bin/bash
-# =============================================================================
-# topology.sh — 단일 호스트 netns 테스트베드 토폴로지 (K8s Pod ↔ veth ↔ host ↔ NIC 를 흉내)
+# 단일 호스트 netns 테스트베드. 컨테이너 -> veth -> 호스트 -> NIC 경로를 netns 두 개로 만든다.
 #
-#   ┌─ ns_send ─────┐            host netns                    ┌─ ns_recv ─────┐
-#   │ talker        │ vs_ns ── vs_host ─(routing)─ vr_host ── vr_ns │ listener      │
-#   │ be_flood      │ 10.10.1.2  10.10.1.1        10.10.2.1  10.10.2.2 │ udp_sink    │
-#   └───────────────┘   ▲                            ▲          └───────────────┘
-#          "Pod"        │ prio_probe(ingress):       │ ★ 물리 NIC 역할:
-#                       │ veth 를 건넌 직후          │   clsact egress: ts_classifier + prio_probe
-#                       │ skb->priority 관찰         │   root qdisc: tbf(병목) → {pfifo|fq_codel|pfifo_fast|prio}
+#   ns_send (talker, be_flood) --veth-- vs_host [host] vr_host --veth-- ns_recv (listener, udp_sink)
 #
-#   vs_host ingress 의 prio_probe 는 "Pod 안에서 SO_PRIORITY=6 을 줘도 veth 를 건너면 0"
-#   을 측정으로 보여 주고, vr_host egress 의 prio_probe 는 분류기 뒤에서 6 이 됨을 보여 준다.
+#   vs_host ingress : prio_probe, veth 를 막 건넌 패킷의 skb->priority
+#   vr_host egress  : NIC 역할. ts_classifier + prio_probe, root qdisc 는 tbf 병목 아래 조건별 qdisc
 #
-# 사용: sudo bash topology.sh up | down | status
-# =============================================================================
+# sudo bash topology.sh up | down | status
 set -euo pipefail
 
 NS_SEND=ns_send
 NS_RECV=ns_recv
 VS_NS=vs_ns;   VS_HOST=vs_host    # sender 측 veth 쌍
-VR_NS=vr_ns;   VR_HOST=vr_host    # receiver 측 veth 쌍 (vr_host = "물리 NIC")
+VR_NS=vr_ns;   VR_HOST=vr_host    # receiver 측 veth 쌍, vr_host 가 NIC 역할
 SEND_IP=10.10.1.2; SEND_GW=10.10.1.1
 RECV_IP=10.10.2.2; RECV_GW=10.10.2.1
 BPF_PIN_DIR=/sys/fs/bpf/tsn_testbed
@@ -50,13 +42,12 @@ up() {
 
     sysctl -qw net.ipv4.ip_forward=1
     sysctl -qw net.ipv4.conf.$VS_HOST.rp_filter=0 net.ipv4.conf.$VR_HOST.rp_filter=0 2>/dev/null || true
-    # Docker 가 설치된 호스트(GitHub Actions 러너 등)는 FORWARD 정책이 DROP 이라
-    # 두 netns 사이의 라우팅이 막힌다 → 이 두 인터페이스 사이만 명시적으로 허용
+    # Docker 가 깔린 호스트(Actions 러너 포함)는 FORWARD 기본 정책이 DROP 이라 두 인터페이스 사이만 연다
     if command -v iptables >/dev/null 2>&1; then
         iptables -I FORWARD 1 -i $VS_HOST -o $VR_HOST -j ACCEPT 2>/dev/null || true
         iptables -I FORWARD 1 -i $VR_HOST -o $VS_HOST -j ACCEPT 2>/dev/null || true
     fi
-    # 1500B 미만 패킷만 쓰지만, GSO/GRO 가 타이밍을 흐리지 않도록 오프로드 해제
+    # GSO/GRO 가 패킷을 묶어 타이밍을 흐리지 않게 오프로드를 끈다
     for dev in $VS_HOST $VR_HOST; do ethtool -K $dev tso off gso off gro off >/dev/null 2>&1 || true; done
     ip netns exec $NS_SEND ethtool -K $VS_NS tso off gso off gro off >/dev/null 2>&1 || true
     ip netns exec $NS_RECV ethtool -K $VR_NS tso off gso off gro off >/dev/null 2>&1 || true
@@ -69,7 +60,7 @@ up() {
     if ip netns exec $NS_SEND ping -c2 -W2 $RECV_IP >/dev/null; then
         echo "connectivity OK"
     else
-        echo "ping 실패 — 진단:"
+        echo "ping 실패:"
         ip -br addr show $VS_HOST $VR_HOST
         ip netns exec $NS_SEND ip route
         command -v iptables >/dev/null 2>&1 && iptables -S FORWARD | head -5

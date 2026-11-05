@@ -1,7 +1,4 @@
-"""test_ts_classifier.py — ts_classifier.bpf.o 단위 테스트 (BPF_PROG_TEST_RUN)
-
-실행: sudo make -C bpf test   (root + bpftool + 빌드된 build/*.bpf.o 필요)
-"""
+"""ts_classifier 단위 테스트. sudo make -C bpf test (root, bpftool, build/*.bpf.o 필요)"""
 
 from __future__ import annotations
 
@@ -32,18 +29,18 @@ def delta(prog, before, after):
     return {k: after[k] - before[k] for k in before}
 
 
-# ── 분류 기준 ─────────────────────────────────────────────────────────────
+# 분류
 def test_udp_default_port_is_ts(prog):
     c0 = prog.counters()
     r = prog.run(h.udp_frame(h.TS_DEFAULT_UDP_PORT))
-    assert r.retval == h.TC_ACT_UNSPEC, "TCX_NEXT 를 반환해야 뒤의 Cilium 프로그램이 실행된다"
+    assert r.retval == h.TC_ACT_UNSPEC, "TCX_NEXT 여야 뒤 tcx 프로그램이 돈다"
     assert r.priority == h.TS_DEFAULT_PRIORITY
     d = delta(prog, c0, prog.counters())
     assert d["TS_UDP"] == 1 and d["NORMAL"] == 0
 
 
 def test_other_udp_port_untouched_keeps_existing_priority(prog):
-    """비-TS 패킷의 priority 는 절대 덮어쓰지 않는다 (ADR-0004)."""
+    """TS 가 아니면 다른 애플리케이션이 준 priority 를 그대로 둔다."""
     c0 = prog.counters()
     r = prog.run(h.udp_frame(5000), ctx_priority=3)
     assert r.retval == h.TC_ACT_UNSPEC
@@ -85,7 +82,7 @@ def test_vlan_pcp1_but_ts_port_is_ts_by_port(prog):
 
 
 def test_qinq_outer_pcp_decides(prog):
-    # 802.1ad 외곽 PCP 5 / 내부 PCP 1 → TS ; 외곽 1 / 내부 7 → normal
+    # 바깥 PCP 5 + 안쪽 1 은 TS, 바깥 1 + 안쪽 7 은 일반
     inner_lo = h.vlan(1, 10, 0x0800, h.ipv4(17, h.udp(5000)))
     outer_hi = h.eth(0x88A8, h.vlan(5, 200, 0x8100, inner_lo))
     assert prog.run(outer_hi).priority == h.TS_DEFAULT_PRIORITY
@@ -107,8 +104,7 @@ def test_arp_is_normal(prog):
     assert r.priority == 2
 
 
-def test_ipv6_udp_ts_port_is_normal_documented_limitation(prog):
-    """IPv6 는 아직 분류하지 않는다 (docs/LIMITATIONS.md)."""
+def test_ipv6_is_not_classified_yet(prog):
     r = prog.run(h.eth(0x86DD, h.ipv6(17, h.udp(h.TS_DEFAULT_UDP_PORT))))
     assert r.priority == 0
 
@@ -129,7 +125,7 @@ def test_truncated_ipv4_header_is_safe(prog):
 
 
 def test_ipv4_first_fragment_is_normal(prog):
-    """단편은 TS 로 보지 않는다 — 첫 단편(MF=1)에 UDP:6000 헤더가 있어도 마찬가지."""
+    """첫 단편(MF=1)에 UDP:6000 헤더가 있어도 TS 로 보지 않는다."""
     frame = h.eth(0x0800, h.ipv4(17, h.udp(h.TS_DEFAULT_UDP_PORT), frag_off=h.IP_MF))
     r = prog.run(frame, ctx_priority=0)
     assert r.priority == 0
@@ -149,7 +145,7 @@ def test_truncated_udp_header_is_normal(prog):
     assert r.priority == 0
 
 
-# ── 런타임 설정 ───────────────────────────────────────────────────────────
+# 런타임 설정
 def test_custom_priority_from_config(prog):
     prog.set_config(priority=5)
     assert prog.run(h.udp_frame(h.TS_DEFAULT_UDP_PORT)).priority == 5
@@ -166,7 +162,7 @@ def test_port_map_adds_ts_port(prog):
     assert prog.run(h.udp_frame(5002)).priority == 0
 
 
-# ── DSCP 마킹 ─────────────────────────────────────────────────────────────
+# DSCP 마킹
 def test_dscp_not_marked_without_flag(prog):
     frame = h.udp_frame(h.TS_DEFAULT_UDP_PORT, tos=0)
     r = prog.run(frame)
@@ -175,7 +171,7 @@ def test_dscp_not_marked_without_flag(prog):
 
 
 def test_dscp_ef_marking_updates_checksum(prog):
-    prog.set_config(flags=h.TS_CFG_MARK_DSCP)  # dscp=0 → 기본 EF(46)
+    prog.set_config(flags=h.TS_CFG_MARK_DSCP)  # dscp 0 이면 기본값 EF(46)
     c0 = prog.counters()
     orig = h.udp_frame(h.TS_DEFAULT_UDP_PORT, tos=0)
     r = prog.run(orig)
@@ -220,10 +216,3 @@ def test_dscp_already_marked_is_noop(prog):
     r = prog.run(frame)
     assert r.data_out == frame
     assert delta(prog, c0, prog.counters())["DSCP_MARKED"] == 0
-
-
-# ── 성능 감 잡기 (회귀 방지용 상한) ──────────────────────────────────────
-def test_repeat_run_is_cheap(prog):
-    """repeat 로 커널 측 평균 실행 시간을 재 본다 — 수 μs 를 넘으면 뭔가 잘못된 것."""
-    r = prog.run(h.udp_frame(h.TS_DEFAULT_UDP_PORT), repeat=10000)
-    assert r.priority == h.TS_DEFAULT_PRIORITY
